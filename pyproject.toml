@@ -27,6 +27,9 @@ shopping-agent = "shopping_agent.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+shopping_agent = ["static/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

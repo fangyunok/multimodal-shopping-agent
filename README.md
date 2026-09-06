@@ -101,6 +101,8 @@ python -m venv .venv
 
 服务启动后访问 `http://127.0.0.1:8000/docs`，可以调用 `/search`、`/agent`、`/agent/image` 和 `/tools`。
 
+访问 `http://127.0.0.1:8000/` 可使用内置演示页面，无需Node.js或单独构建前端。
+
 图片请求使用 `multipart/form-data`，不要向服务暴露本机文件路径：
 
 ```bash

@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
 from .agent import ShoppingAgent
@@ -15,6 +16,7 @@ from .semantic_retrieval import SemanticRetriever
 from .tools import ShoppingTools, ToolDefinition
 
 ROOT = Path(__file__).resolve().parents[2]
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 @lru_cache
@@ -42,6 +44,11 @@ def get_tools() -> ShoppingTools:
 app = FastAPI(title="Multimodal Shopping Agent", version="0.1.0")
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+@app.get("/", include_in_schema=False)
+def demo_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/health")

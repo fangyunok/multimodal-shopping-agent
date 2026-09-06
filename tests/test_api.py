@@ -9,6 +9,12 @@ from shopping_agent.app import app
 client = TestClient(app)
 
 
+def test_demo_page() -> None:
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "多模态购物 Agent" in response.text
+
+
 def test_health() -> None:
     assert client.get("/health").json() == {"status": "ok"}
 

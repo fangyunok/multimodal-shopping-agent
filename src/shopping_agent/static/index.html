@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>多模态购物 Agent</title>
+  <style>
+    :root{--ink:#172018;--muted:#667067;--paper:#f4f1e8;--card:#fffdf7;--green:#1f6b4f;--line:#d9d5c8;--orange:#e06b3c}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 10% 0,#ddebdc 0,transparent 32%),var(--paper);color:var(--ink);font:16px/1.55 system-ui,"Microsoft YaHei",sans-serif}
+    main{max-width:1060px;margin:auto;padding:48px 24px} header{display:flex;justify-content:space-between;gap:24px;align-items:end;margin-bottom:28px}
+    h1{font-family:Georgia,"STSong",serif;font-size:clamp(36px,6vw,68px);line-height:1;margin:0;letter-spacing:-2px} .tag{color:var(--green);font-weight:700}.sub{max-width:520px;color:var(--muted)}
+    .panel{background:rgba(255,253,247,.9);border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:0 12px 40px #233b2520}
+    form{display:grid;grid-template-columns:1fr 150px 150px;gap:12px} textarea,input,select,button{font:inherit;border-radius:12px;border:1px solid var(--line);padding:12px;background:white} textarea{grid-column:1/-1;min-height:90px;resize:vertical} input[type=file]{grid-column:1/-1}
+    button{background:var(--green);color:white;border:0;font-weight:700;cursor:pointer} button:disabled{opacity:.55}.status{min-height:26px;color:var(--muted);margin:14px 2px}
+    .answer{font-size:20px;border-left:4px solid var(--orange);padding:8px 16px;margin:10px 0 20px}.products{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+    article{border:1px solid var(--line);border-radius:14px;padding:16px;background:white} article h3{margin:0 0 8px}.price{color:var(--orange);font-size:23px;font-weight:800}.score{color:var(--muted);font-size:13px}
+    details{margin-top:18px} pre{white-space:pre-wrap;background:#172018;color:#dbe9dc;padding:15px;border-radius:12px;overflow:auto;font-size:12px}
+    @media(max-width:700px){header{display:block}form{grid-template-columns:1fr}textarea,input,select,button{grid-column:1}.sub{margin-top:14px}}
+  </style>
+</head>
+<body><main>
+  <header><div><div class="tag">MULTIMODAL RAG · TOOL CALLING</div><h1>购物 Agent</h1></div><div class="sub">输入购物需求或上传参考图片。系统会检索商品、检查库存，并展示可审计的工具调用过程。</div></header>
+  <section class="panel">
+    <form id="form">
+      <textarea id="query" placeholder="例如：想找一双500元以内、适合通勤的白色运动鞋"></textarea>
+      <input id="budget" type="number" min="0" placeholder="最高预算">
+      <input id="category" placeholder="类目（可选）">
+      <button id="submit" type="submit">开始推荐</button>
+      <input id="image" type="file" accept="image/jpeg,image/png,image/webp">
+    </form>
+    <div class="status" id="status">CPU 基线已就绪</div>
+    <div id="answer"></div><div class="products" id="products"></div>
+    <details id="traceBox" hidden><summary>查看工具调用轨迹</summary><pre id="trace"></pre></details>
+  </section>
+</main>
+<script>
+const form=document.querySelector('#form'),statusEl=document.querySelector('#status'),button=document.querySelector('#submit');
+form.addEventListener('submit',async(e)=>{e.preventDefault();button.disabled=true;statusEl.textContent='正在检索并调用工具…';
+  const query=document.querySelector('#query').value,budget=document.querySelector('#budget').value,category=document.querySelector('#category').value,file=document.querySelector('#image').files[0];
+  try{let response;if(file){const data=new FormData();data.append('image',file);data.append('query',query);if(budget)data.append('max_price',budget);if(category)data.append('category',category);response=await fetch('/agent/image',{method:'POST',body:data});}
+    else{const payload={query};if(budget)payload.max_price=Number(budget);if(category)payload.category=category;response=await fetch('/agent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}
+    const result=await response.json();if(!response.ok)throw new Error(result.detail||'请求失败');
+    document.querySelector('#answer').innerHTML=`<div class="answer">${escapeHtml(result.answer)}</div>`;
+    document.querySelector('#products').innerHTML=result.hits.map(h=>`<article><h3>${escapeHtml(h.product.title)}</h3><div class="price">¥${h.product.price}</div><div>${escapeHtml(h.product.category)} · 评分 ${h.product.rating}</div><div class="score">匹配分 ${h.score} · ${escapeHtml(h.reasons.join('；'))}</div></article>`).join('');
+    document.querySelector('#trace').textContent=JSON.stringify(result.tool_trace,null,2);document.querySelector('#traceBox').hidden=false;statusEl.textContent=`完成 · 返回 ${result.hits.length} 个有库存商品`;
+  }catch(error){statusEl.textContent=`错误：${error.message}`;}finally{button.disabled=false;}});
+function escapeHtml(value){const div=document.createElement('div');div.textContent=String(value);return div.innerHTML;}
+</script></body></html>
