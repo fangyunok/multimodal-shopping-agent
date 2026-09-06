@@ -49,7 +49,7 @@ class SearchHit(BaseModel):
 
 
 class AgentRequest(SearchRequest):
-    intent: Literal["auto", "search", "compare"] = "auto"
+    intent: Literal["auto", "search", "compare", "inventory"] = "auto"
     product_ids: list[str] = Field(default_factory=list)
 
 

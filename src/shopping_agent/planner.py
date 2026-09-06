@@ -25,7 +25,12 @@ class RulePlanner:
     def plan(self, query: str, requested_intent: str = "auto") -> Plan:
         intent = requested_intent
         if intent == "auto":
-            intent = "compare" if any(word in query for word in ("对比", "比较", "区别")) else "search"
+            if any(word in query for word in ("对比", "比较", "区别")):
+                intent = "compare"
+            elif any(word in query for word in ("库存", "有货", "现货")):
+                intent = "inventory"
+            else:
+                intent = "search"
         max_price = None
         for pattern in PRICE_PATTERNS:
             match = pattern.search(query)
@@ -34,4 +39,3 @@ class RulePlanner:
                 break
         category = next((category for category in self.categories if category.lower() in query.lower()), None)
         return Plan(intent=intent, max_price=max_price, category=category)
-

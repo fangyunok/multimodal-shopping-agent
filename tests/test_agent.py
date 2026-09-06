@@ -41,6 +41,18 @@ def test_compare_tool() -> None:
     assert "云步白色通勤运动鞋" in response.answer
 
 
+def test_inventory_intent_calls_inventory_tool() -> None:
+    response = make_agent().run(AgentRequest(query="这个商品有货吗", product_ids=["shoe-001"]))
+    assert response.intent == "inventory"
+    assert response.tool_trace[0]["tool"] == "check_inventory"
+    assert "剩余 23 件" in response.answer
+
+
+def test_inventory_handles_unknown_product() -> None:
+    response = make_agent().run(AgentRequest(intent="inventory", product_ids=["missing"]))
+    assert response.tool_trace[0]["error"] == "product_not_found"
+
+
 def test_offline_evaluation() -> None:
     result = evaluate(make_agent(), ROOT / "data/eval.jsonl")
     assert result.tool_selection_accuracy == 1.0

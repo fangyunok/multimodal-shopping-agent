@@ -11,3 +11,7 @@ def test_rule_planner_extracts_intent_budget_and_category() -> None:
 
 def test_explicit_intent_is_preserved() -> None:
     assert RulePlanner([]).plan("比较商品", "search").intent == "search"
+
+
+def test_inventory_intent() -> None:
+    assert RulePlanner([]).plan("这个商品还有库存吗").intent == "inventory"

@@ -16,6 +16,17 @@ class ShoppingAgent:
         plan = self.planner.plan(request.query, request.intent)
         intent = "compare" if len(request.product_ids) >= 2 else plan.intent
         trace: list[dict] = []
+        if intent == "inventory":
+            if not request.product_ids:
+                return AgentResponse(intent=intent, answer="请提供需要查询库存的商品 ID。", tool_trace=trace)
+            product_id = request.product_ids[0]
+            if product_id not in self.tools.by_id:
+                trace.append({"tool": "check_inventory", "arguments": {"product_id": product_id}, "error": "product_not_found"})
+                return AgentResponse(intent=intent, answer=f"没有找到商品 {product_id}。", tool_trace=trace)
+            inventory = self.tools.check_inventory(product_id)
+            trace.append({"tool": "check_inventory", "arguments": {"product_id": product_id}, "result": inventory})
+            status = f"有货，剩余 {inventory['stock']} 件" if inventory["available"] else "暂时无货"
+            return AgentResponse(intent=intent, answer=f"商品 {product_id} {status}。", tool_trace=trace)
         if intent == "compare":
             products = self.tools.compare_products(request.product_ids)
             trace.append({"tool": "compare_products", "arguments": {"product_ids": request.product_ids}, "result_count": len(products)})
