@@ -76,6 +76,15 @@ ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和�
 
 标题或原图检索自身只作为链路检查，不能代表语义检索效果。
 
+生成不复制商品标题的属性需求评测集，并运行统一指标：
+
+```bash
+.venv\\Scripts\\shopping-agent --catalog data/processed/products.jsonl --build-benchmark outputs/retrieval_benchmark.jsonl
+.venv\\Scripts\\shopping-agent --catalog data/processed/products.jsonl --benchmark outputs/retrieval_benchmark.jsonl
+```
+
+自动生成的查询必须经过人工抽查，最终测试集应补充同义改写、属性组合、类目歧义和不同视角图片。
+
 ## 快速开始
 
 ```bash

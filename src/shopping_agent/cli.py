@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .agent import ShoppingAgent
 from .abo import convert_abo, fetch_abo_subset_images
+from .benchmark import evaluate_cases, generate_attribute_cases, read_benchmark, write_benchmark
 from .encoders import ChineseClipEncoder
 from .dataset import prepare_dataset
 from .evaluation import evaluate
@@ -35,6 +36,8 @@ def main() -> None:
     parser.add_argument("--fetch-abo-images", metavar="ABO_ROOT")
     parser.add_argument("--download-workers", type=int, default=8)
     parser.add_argument("--evaluate-retrieval", choices=("text", "image"))
+    parser.add_argument("--build-benchmark", metavar="OUTPUT_JSONL")
+    parser.add_argument("--benchmark", metavar="BENCHMARK_JSONL")
     args = parser.parse_args()
     if args.fetch_abo_images:
         summary = fetch_abo_subset_images(args.fetch_abo_images, args.abo_limit, args.download_workers)
@@ -53,6 +56,15 @@ def main() -> None:
         print(manifest.model_dump_json(indent=2))
         return
     retriever = HybridRetriever.from_jsonl(args.catalog)
+    if args.build_benchmark:
+        test_products = [product for product in retriever.products if product.split == "test"]
+        cases = generate_attribute_cases(test_products)
+        write_benchmark(cases, args.build_benchmark)
+        print(json.dumps({"cases": len(cases), "output": args.build_benchmark}, ensure_ascii=False, indent=2))
+        return
+    if args.benchmark:
+        print(json.dumps(evaluate_cases(retriever, read_benchmark(args.benchmark)), ensure_ascii=False, indent=2))
+        return
     if args.evaluate_retrieval:
         evaluation_products = [product for product in retriever.products if product.split in (None, "test")]
         print(json.dumps(evaluate_retrieval(retriever, evaluation_products, args.evaluate_retrieval), ensure_ascii=False, indent=2))
