@@ -12,6 +12,7 @@ from .evaluation import evaluate
 from .indexing import build_index
 from .models import AgentRequest
 from .retrieval import HybridRetriever
+from .retrieval_evaluation import evaluate_retrieval
 from .tools import ShoppingTools
 
 
@@ -33,6 +34,7 @@ def main() -> None:
     parser.add_argument("--abo-output", default="data/raw/abo.jsonl")
     parser.add_argument("--fetch-abo-images", metavar="ABO_ROOT")
     parser.add_argument("--download-workers", type=int, default=8)
+    parser.add_argument("--evaluate-retrieval", choices=("text", "image"))
     args = parser.parse_args()
     if args.fetch_abo_images:
         summary = fetch_abo_subset_images(args.fetch_abo_images, args.abo_limit, args.download_workers)
@@ -50,7 +52,12 @@ def main() -> None:
         manifest = build_index(args.catalog, args.build_index, ChineseClipEncoder(args.model, args.device), args.model)
         print(manifest.model_dump_json(indent=2))
         return
-    agent = ShoppingAgent(ShoppingTools(HybridRetriever.from_jsonl(args.catalog)))
+    retriever = HybridRetriever.from_jsonl(args.catalog)
+    if args.evaluate_retrieval:
+        evaluation_products = [product for product in retriever.products if product.split in (None, "test")]
+        print(json.dumps(evaluate_retrieval(retriever, evaluation_products, args.evaluate_retrieval), ensure_ascii=False, indent=2))
+        return
+    agent = ShoppingAgent(ShoppingTools(retriever))
     if args.evaluate:
         print(json.dumps(evaluate(agent, args.evaluate).as_dict(), ensure_ascii=False, indent=2))
         return

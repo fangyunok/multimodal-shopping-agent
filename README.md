@@ -67,6 +67,15 @@ $env:INDEX_DIR="data/index/chinese-clip-base"
 
 ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和署名要求见 `docs/ABO_DATASET.md`。
 
+检索评测统一输出 Recall@1/5/10 与 MRR：
+
+```bash
+.venv\\Scripts\\shopping-agent --catalog data/processed/products.jsonl --evaluate-retrieval text
+.venv\\Scripts\\shopping-agent --catalog data/processed/products.jsonl --evaluate-retrieval image
+```
+
+标题或原图检索自身只作为链路检查，不能代表语义检索效果。
+
 ## 快速开始
 
 ```bash
