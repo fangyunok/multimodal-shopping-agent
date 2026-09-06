@@ -58,3 +58,11 @@
 - 校验 JPEG、PNG、WebP 图片并按 SHA-256 去重；
 - 基于商品 ID 哈希稳定划分 train/validation/test；
 - 原始大数据、处理后数据与图片默认不进入 Git。
+
+## 2026-09-06：ABO 数据适配器
+
+- 选择官方 CC BY 4.0 的 Amazon Berkeley Objects 作为真实图文检索数据；
+- 只使用约 83 MB 商品 metadata 和约 3 GB 的 256px 图片包；
+- 优先提取中文字段，缺失时回退英文；
+- 关联主图并映射品牌、颜色、材质、风格等属性；
+- 明确 ABO 不用于价格和实时库存评测。

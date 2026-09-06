@@ -53,6 +53,14 @@ $env:INDEX_DIR="data/index/chinese-clip-base"
 
 处理后的数据和图片默认不提交 Git，数据规范见 `docs/DATASET_CARD.md`。
 
+首个真实数据源使用 Amazon Berkeley Objects（ABO）的 256px 图片版本。下载并解压官方归档后，可抽取 1000 条商品子集：
+
+```bash
+.venv\\Scripts\\shopping-agent --convert-abo D:/datasets/abo --abo-limit 1000
+```
+
+ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和署名要求见 `docs/ABO_DATASET.md`。
+
 ## 快速开始
 
 ```bash
