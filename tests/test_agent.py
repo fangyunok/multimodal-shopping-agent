@@ -27,6 +27,14 @@ def test_agent_calls_inventory_and_excludes_out_of_stock() -> None:
     assert all(hit.product.stock > 0 for hit in response.hits)
 
 
+def test_agent_extracts_budget_and_category_from_query() -> None:
+    response = make_agent().run(AgentRequest(query="想找500元以内的运动鞋"))
+    arguments = response.tool_trace[0]["arguments"]
+    assert arguments["max_price"] == 500
+    assert arguments["category"] == "运动鞋"
+    assert all(hit.product.price <= 500 for hit in response.hits)
+
+
 def test_compare_tool() -> None:
     response = make_agent().run(AgentRequest(intent="compare", product_ids=["shoe-001", "shoe-002"]))
     assert response.tool_trace[0]["tool"] == "compare_products"
@@ -38,6 +46,7 @@ def test_offline_evaluation() -> None:
     assert result.tool_selection_accuracy == 1.0
     assert result.constraint_pass_rate == 1.0
     assert result.retrieval_hit_rate >= 0.75
+    assert result.parameter_accuracy == 1.0
 
 
 def test_image_search_baseline(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .models import AgentRequest, AgentResponse, SearchRequest
+from .planner import RulePlanner
 from .tools import ShoppingTools
 
 
@@ -9,11 +10,11 @@ class ShoppingAgent:
 
     def __init__(self, tools: ShoppingTools):
         self.tools = tools
+        self.planner = RulePlanner([product.category for product in tools.retriever.products])
 
     def run(self, request: AgentRequest) -> AgentResponse:
-        intent = request.intent
-        if intent == "auto":
-            intent = "compare" if len(request.product_ids) >= 2 or "对比" in request.query else "search"
+        plan = self.planner.plan(request.query, request.intent)
+        intent = "compare" if len(request.product_ids) >= 2 else plan.intent
         trace: list[dict] = []
         if intent == "compare":
             products = self.tools.compare_products(request.product_ids)
@@ -25,7 +26,10 @@ class ShoppingAgent:
             answer = "；".join(lines) + f"。综合评分与价格，优先考虑 {best.title}。"
             return AgentResponse(intent=intent, answer=answer, tool_trace=trace)
 
-        search_request = SearchRequest(**request.model_dump(include={"query", "image_path", "max_price", "category", "top_k"}))
+        values = request.model_dump(include={"query", "image_path", "max_price", "category", "top_k"})
+        values["max_price"] = request.max_price if request.max_price is not None else plan.max_price
+        values["category"] = request.category or plan.category
+        search_request = SearchRequest(**values)
         hits = self.tools.search_products(search_request)
         trace.append({"tool": "search_products", "arguments": search_request.model_dump(), "result_count": len(hits)})
         if not hits:
@@ -42,4 +46,3 @@ class ShoppingAgent:
         reason = "、".join(top.reasons) or "评分较高"
         answer = f"推荐 {top.product.title}（¥{top.product.price:g}，评分 {top.product.rating:.1f}），因为{reason}。"
         return AgentResponse(intent=intent, answer=answer, tool_trace=trace, hits=available)
-
