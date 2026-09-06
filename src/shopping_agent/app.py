@@ -12,7 +12,7 @@ from .agent import ShoppingAgent
 from .models import AgentRequest, AgentResponse, SearchHit, SearchRequest
 from .retrieval import HybridRetriever
 from .semantic_retrieval import SemanticRetriever
-from .tools import ShoppingTools
+from .tools import ShoppingTools, ToolDefinition
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -47,6 +47,11 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/tools", response_model=list[ToolDefinition])
+def tool_definitions() -> list[ToolDefinition]:
+    return get_tools().definitions()
 
 
 @app.post("/search", response_model=list[SearchHit])

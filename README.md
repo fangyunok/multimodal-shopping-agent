@@ -12,6 +12,7 @@
 - 搜索、库存检查、商品对比工具；
 - 可审计的 Agent 工具调用轨迹；
 - 从自然语言抽取预算、类目和比较意图的规则规划基线；
+- 可直接提供给 LLM Function Calling 的工具名称、描述和 JSON Schema；
 - 检索命中率、工具选择准确率、约束满足率评测；
 - FastAPI 服务和自动化测试。
 - JPEG、PNG、WebP 图片上传接口（5 MB 限制与内容校验）。
@@ -98,7 +99,7 @@ python -m venv .venv
 .venv\\Scripts\\uvicorn shopping_agent.app:app --reload
 ```
 
-服务启动后访问 `http://127.0.0.1:8000/docs`，可以直接调用 `/search` 和 `/agent`。
+服务启动后访问 `http://127.0.0.1:8000/docs`，可以调用 `/search`、`/agent`、`/agent/image` 和 `/tools`。
 
 图片请求使用 `multipart/form-data`，不要向服务暴露本机文件路径：
 

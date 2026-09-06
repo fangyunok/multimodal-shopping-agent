@@ -13,6 +13,14 @@ def test_health() -> None:
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_tool_registry_exposes_json_schemas() -> None:
+    response = client.get("/tools")
+    assert response.status_code == 200
+    tools = {tool["name"]: tool for tool in response.json()}
+    assert set(tools) == {"search_products", "compare_products", "check_inventory"}
+    assert "max_price" in tools["search_products"]["parameters"]["properties"]
+
+
 def test_agent_endpoint() -> None:
     response = client.post("/agent", json={"query": "白色通勤鞋", "max_price": 500})
     assert response.status_code == 200
