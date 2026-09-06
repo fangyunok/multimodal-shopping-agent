@@ -17,6 +17,17 @@
 
 轻量图片特征只是 CPU 冒烟基线，不把颜色相似误称为语义理解。下一阶段将接入中文 CLIP，实现真正的以文搜图、以图搜图和图文联合检索；再接入视觉语言模型完成商品属性理解。
 
+项目已经提供可选的中文 CLIP 检索后端。首次启用会下载模型，本机 CPU 可以推理但较慢：
+
+```bash
+.venv\\Scripts\\python -m pip install -e ".[clip,dev]"
+$env:RETRIEVER_BACKEND="clip"
+$env:MODEL_DEVICE="cpu"
+.venv\\Scripts\\uvicorn shopping_agent.app:app
+```
+
+默认 `RETRIEVER_BACKEND=baseline`，自动化测试不下载模型。
+
 ## 快速开始
 
 ```bash
@@ -57,7 +68,7 @@ tests/                        单元与接口测试
 
 - [x] M0：仓库、数据契约、测试与 API 骨架
 - [x] M1：CPU 图文检索基线、工具调用与评测闭环
-- [ ] M2：中文 CLIP 向量化、FAISS 索引、真实商品图文数据
+- [ ] M2：中文 CLIP 向量化（已接入）、持久化索引、真实商品图文数据
 - [ ] M3：视觉语言模型属性抽取和基于 schema 的 LLM 工具调用
 - [ ] M4：RAG 忠实度、工具参数、任务成功率、延迟与消融实验
 - [ ] M5：Gradio 演示、Docker、CI 和完整实验报告

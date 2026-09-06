@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from .models import Product, SearchHit, SearchRequest
-from .retrieval import HybridRetriever
+from typing import Protocol
+
+
+class Retriever(Protocol):
+    products: list[Product]
+
+    def search(self, request: SearchRequest) -> list[SearchHit]: ...
 
 
 class ShoppingTools:
-    def __init__(self, retriever: HybridRetriever):
+    def __init__(self, retriever: Retriever):
         self.retriever = retriever
         self.by_id = {product.id: product for product in retriever.products}
 
@@ -18,4 +24,3 @@ class ShoppingTools:
     def check_inventory(self, product_id: str) -> dict[str, int | str | bool]:
         product = self.by_id[product_id]
         return {"product_id": product_id, "stock": product.stock, "available": product.stock > 0}
-

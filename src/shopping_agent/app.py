@@ -11,6 +11,7 @@ from PIL import Image, UnidentifiedImageError
 from .agent import ShoppingAgent
 from .models import AgentRequest, AgentResponse, SearchHit, SearchRequest
 from .retrieval import HybridRetriever
+from .semantic_retrieval import SemanticRetriever
 from .tools import ShoppingTools
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +20,15 @@ ROOT = Path(__file__).resolve().parents[2]
 @lru_cache
 def get_tools() -> ShoppingTools:
     catalog = Path(os.getenv("CATALOG_PATH", ROOT / "data" / "products.jsonl"))
+    backend = os.getenv("RETRIEVER_BACKEND", "baseline").lower()
+    if backend == "clip":
+        from .encoders import ChineseClipEncoder
+
+        model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
+        device = os.getenv("MODEL_DEVICE", "cpu")
+        return ShoppingTools(SemanticRetriever.from_jsonl(catalog, ChineseClipEncoder(model_name, device)))
+    if backend != "baseline":
+        raise ValueError(f"不支持的 RETRIEVER_BACKEND: {backend}")
     return ShoppingTools(HybridRetriever.from_jsonl(catalog))
 
 
