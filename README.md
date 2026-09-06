@@ -41,7 +41,7 @@ $env:MODEL_DEVICE="cpu"
 $env:INDEX_DIR="data/index/chinese-clip-base"
 ```
 
-`--model` 可以是本地模型目录，`--model-id` 用于把标准模型 ID 写入索引。`manifest.json` 会记录商品目录 SHA-256、模型名、向量维度和生成时间。商品目录发生变化或模型不一致时，服务拒绝加载旧索引。
+`--model` 可以是本地模型目录，`--model-id` 用于把标准模型 ID 写入索引。`--image-weight` 可在 0 到 1 之间设置商品图片在离线向量中的融合权重，便于做消融实验。`manifest.json` 会记录商品目录 SHA-256、模型名、融合权重、向量维度和生成时间。商品目录发生变化或模型不一致时，服务拒绝加载旧索引。
 
 ## 数据准备
 

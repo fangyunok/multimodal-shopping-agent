@@ -59,3 +59,14 @@ def test_index_rejects_wrong_model(tmp_path: Path) -> None:
         assert "索引模型" in str(error)
     else:
         raise AssertionError("wrong model must invalidate the index")
+
+
+def test_index_rejects_invalid_image_weight(tmp_path: Path) -> None:
+    catalog = tmp_path / "products.jsonl"
+    write_catalog(catalog)
+    try:
+        build_index(catalog, tmp_path / "index", FakeEncoder(), "fake-clip", 1.1)
+    except ValueError as error:
+        assert "image_weight" in str(error)
+    else:
+        raise AssertionError("invalid image weight must be rejected")

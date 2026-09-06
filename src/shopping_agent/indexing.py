@@ -18,6 +18,7 @@ class IndexManifest(BaseModel):
     product_count: int
     vector_dimension: int
     created_at: str
+    image_weight: float = 0.5
 
 
 def file_sha256(path: Path) -> str:
@@ -32,7 +33,11 @@ def load_catalog(path: Path) -> list[Product]:
     return [Product.model_validate_json(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def encode_products(products: list[Product], catalog_path: Path, encoder: MultimodalEncoder) -> np.ndarray:
+def encode_products(
+    products: list[Product], catalog_path: Path, encoder: MultimodalEncoder, image_weight: float = 0.5
+) -> np.ndarray:
+    if not 0 <= image_weight <= 1:
+        raise ValueError("image_weight 必须在 0 到 1 之间")
     text_vectors = normalize(encoder.encode_texts([product.searchable_text() for product in products]))
     product_vectors = text_vectors.copy()
     image_rows: list[int] = []
@@ -42,10 +47,12 @@ def encode_products(products: list[Product], catalog_path: Path, encoder: Multim
         if image_path and image_path.exists():
             image_rows.append(row)
             image_paths.append(image_path)
-    if image_paths:
+    if image_paths and image_weight > 0:
         image_vectors = normalize(encoder.encode_images(image_paths))
         for row, image_vector in zip(image_rows, image_vectors):
-            product_vectors[row] = normalize(np.asarray([text_vectors[row] + image_vector]))[0]
+            product_vectors[row] = normalize(
+                np.asarray([(1 - image_weight) * text_vectors[row] + image_weight * image_vector])
+            )[0]
     return normalize(product_vectors)
 
 
@@ -54,6 +61,7 @@ def build_index(
     output_dir: str | Path,
     encoder: MultimodalEncoder,
     model_name: str,
+    image_weight: float = 0.5,
 ) -> IndexManifest:
     catalog = Path(catalog_path).resolve()
     output = Path(output_dir).resolve()
@@ -61,13 +69,14 @@ def build_index(
     products = load_catalog(catalog)
     if not products:
         raise ValueError("商品目录不能为空")
-    vectors = encode_products(products, catalog, encoder)
+    vectors = encode_products(products, catalog, encoder, image_weight)
     manifest = IndexManifest(
         model_name=model_name,
         catalog_sha256=file_sha256(catalog),
         product_count=len(products),
         vector_dimension=int(vectors.shape[1]),
         created_at=datetime.now(timezone.utc).isoformat(),
+        image_weight=image_weight,
     )
     np.save(output / "vectors.npy", vectors, allow_pickle=False)
     (output / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")

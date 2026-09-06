@@ -30,6 +30,7 @@ def main() -> None:
     parser.add_argument("--model-id", default="OFA-Sys/chinese-clip-vit-base-patch16")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--image-weight", type=float, default=0.5)
     parser.add_argument("--retriever-backend", choices=("baseline", "clip"), default="baseline")
     parser.add_argument("--index-dir")
     parser.add_argument("--prepare-data", metavar="CSV_OR_JSONL")
@@ -58,7 +59,7 @@ def main() -> None:
         return
     if args.build_index:
         encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
-        manifest = build_index(args.catalog, args.build_index, encoder, args.model_id)
+        manifest = build_index(args.catalog, args.build_index, encoder, args.model_id, args.image_weight)
         print(manifest.model_dump_json(indent=2))
         return
     if args.retriever_backend == "clip":
