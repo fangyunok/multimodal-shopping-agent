@@ -53,6 +53,21 @@ def test_inventory_handles_unknown_product() -> None:
     assert response.tool_trace[0]["error"] == "product_not_found"
 
 
+def test_agent_routes_all_tool_calls_through_dispatcher(monkeypatch) -> None:
+    agent = make_agent()
+    calls = []
+    original_execute = agent.tools.execute
+
+    def recording_execute(call):
+        calls.append(call.name)
+        return original_execute(call)
+
+    monkeypatch.setattr(agent.tools, "execute", recording_execute)
+    agent.run(AgentRequest(query="500元以内的运动鞋"))
+    assert calls[0] == "search_products"
+    assert "check_inventory" in calls
+
+
 def test_offline_evaluation() -> None:
     result = evaluate(make_agent(), ROOT / "data/eval.jsonl")
     assert result.tool_selection_accuracy == 1.0

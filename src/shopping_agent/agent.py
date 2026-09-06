@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .models import AgentRequest, AgentResponse, SearchRequest
 from .planner import RulePlanner
-from .tools import ShoppingTools
+from .tools import ShoppingTools, ToolCall
 
 
 class ShoppingAgent:
@@ -23,12 +23,12 @@ class ShoppingAgent:
             if product_id not in self.tools.by_id:
                 trace.append({"tool": "check_inventory", "arguments": {"product_id": product_id}, "error": "product_not_found"})
                 return AgentResponse(intent=intent, answer=f"没有找到商品 {product_id}。", tool_trace=trace)
-            inventory = self.tools.check_inventory(product_id)
+            inventory = self.tools.execute(ToolCall(name="check_inventory", arguments={"product_id": product_id}))
             trace.append({"tool": "check_inventory", "arguments": {"product_id": product_id}, "result": inventory})
             status = f"有货，剩余 {inventory['stock']} 件" if inventory["available"] else "暂时无货"
             return AgentResponse(intent=intent, answer=f"商品 {product_id} {status}。", tool_trace=trace)
         if intent == "compare":
-            products = self.tools.compare_products(request.product_ids)
+            products = self.tools.execute(ToolCall(name="compare_products", arguments={"product_ids": request.product_ids}))
             trace.append({"tool": "compare_products", "arguments": {"product_ids": request.product_ids}, "result_count": len(products)})
             if len(products) < 2:
                 return AgentResponse(intent=intent, answer="请至少提供两个有效商品 ID 进行对比。", tool_trace=trace)
@@ -41,13 +41,13 @@ class ShoppingAgent:
         values["max_price"] = request.max_price if request.max_price is not None else plan.max_price
         values["category"] = request.category or plan.category
         search_request = SearchRequest(**values)
-        hits = self.tools.search_products(search_request)
+        hits = self.tools.execute(ToolCall(name="search_products", arguments=search_request.model_dump()))
         trace.append({"tool": "search_products", "arguments": search_request.model_dump(), "result_count": len(hits)})
         if not hits:
             return AgentResponse(intent=intent, answer="没有找到满足条件的商品，请放宽预算或更换描述。", tool_trace=trace)
         available = []
         for hit in hits:
-            inventory = self.tools.check_inventory(hit.product.id)
+            inventory = self.tools.execute(ToolCall(name="check_inventory", arguments={"product_id": hit.product.id}))
             trace.append({"tool": "check_inventory", "arguments": {"product_id": hit.product.id}, "result": inventory})
             if inventory["available"]:
                 available.append(hit)
