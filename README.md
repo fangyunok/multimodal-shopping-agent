@@ -28,6 +28,18 @@ $env:MODEL_DEVICE="cpu"
 
 默认 `RETRIEVER_BACKEND=baseline`，自动化测试不下载模型。
 
+真实数据准备完成后，离线构建并复用商品向量：
+
+```bash
+.venv\\Scripts\\shopping-agent \
+  --catalog data/products.jsonl \
+  --build-index data/index/chinese-clip-base \
+  --device cpu
+$env:INDEX_DIR="data/index/chinese-clip-base"
+```
+
+`manifest.json` 会记录商品目录 SHA-256、模型名、向量维度和生成时间。商品目录发生变化或模型不一致时，服务拒绝加载旧索引。
+
 ## 快速开始
 
 ```bash
@@ -68,7 +80,7 @@ tests/                        单元与接口测试
 
 - [x] M0：仓库、数据契约、测试与 API 骨架
 - [x] M1：CPU 图文检索基线、工具调用与评测闭环
-- [ ] M2：中文 CLIP 向量化（已接入）、持久化索引、真实商品图文数据
+- [ ] M2：中文 CLIP 向量化、持久化索引（均已接入）、真实商品图文数据
 - [ ] M3：视觉语言模型属性抽取和基于 schema 的 LLM 工具调用
 - [ ] M4：RAG 忠实度、工具参数、任务成功率、延迟与消融实验
 - [ ] M5：Gradio 演示、Docker、CI 和完整实验报告

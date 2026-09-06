@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from .encoders import MultimodalEncoder, normalize
+from .indexing import encode_products, load_catalog, load_index
 from .models import Product, SearchHit, SearchRequest
 
 
@@ -15,20 +16,30 @@ class SemanticRetriever:
         self.products = products
         self.catalog_path = catalog_path
         self.encoder = encoder
-        text_vectors = encoder.encode_texts([product.searchable_text() for product in products])
-        product_vectors = normalize(text_vectors)
-        for index, product in enumerate(products):
-            image_path = product.resolved_image(catalog_path)
-            if image_path and image_path.exists():
-                image_vector = normalize(encoder.encode_images([image_path]))[0]
-                product_vectors[index] = normalize(np.asarray([text_vectors[index] + image_vector]))[0]
-        self.product_vectors = normalize(product_vectors)
+        self.product_vectors = encode_products(products, catalog_path, encoder)
 
     @classmethod
     def from_jsonl(cls, path: str | Path, encoder: MultimodalEncoder) -> "SemanticRetriever":
         catalog_path = Path(path).resolve()
-        products = [Product.model_validate_json(line) for line in catalog_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        products = load_catalog(catalog_path)
         return cls(products, catalog_path, encoder)
+
+    @classmethod
+    def from_index(
+        cls,
+        catalog_path: str | Path,
+        index_dir: str | Path,
+        encoder: MultimodalEncoder,
+        expected_model: str | None = None,
+    ) -> "SemanticRetriever":
+        catalog = Path(catalog_path).resolve()
+        products, vectors, _ = load_index(catalog, index_dir, expected_model)
+        instance = cls.__new__(cls)
+        instance.products = products
+        instance.catalog_path = catalog
+        instance.encoder = encoder
+        instance.product_vectors = vectors
+        return instance
 
     def search(self, request: SearchRequest) -> list[SearchHit]:
         parts: list[np.ndarray] = []
@@ -52,4 +63,3 @@ class SemanticRetriever:
                 reasons.append(f"价格不超过 ¥{request.max_price:g}")
             hits.append(SearchHit(product=product, score=round(float(score), 4), text_score=round(float(score), 4) if request.query else 0, image_score=round(float(score), 4) if request.image_path else 0, reasons=reasons))
         return sorted(hits, key=lambda hit: (hit.score, hit.product.rating), reverse=True)[: request.top_k]
-

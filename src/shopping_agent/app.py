@@ -26,7 +26,14 @@ def get_tools() -> ShoppingTools:
 
         model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
         device = os.getenv("MODEL_DEVICE", "cpu")
-        return ShoppingTools(SemanticRetriever.from_jsonl(catalog, ChineseClipEncoder(model_name, device)))
+        encoder = ChineseClipEncoder(model_name, device)
+        index_dir = os.getenv("INDEX_DIR")
+        retriever = (
+            SemanticRetriever.from_index(catalog, index_dir, encoder, model_name)
+            if index_dir
+            else SemanticRetriever.from_jsonl(catalog, encoder)
+        )
+        return ShoppingTools(retriever)
     if backend != "baseline":
         raise ValueError(f"不支持的 RETRIEVER_BACKEND: {backend}")
     return ShoppingTools(HybridRetriever.from_jsonl(catalog))
