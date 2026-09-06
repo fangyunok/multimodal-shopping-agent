@@ -33,6 +33,7 @@ class Product(BaseModel):
 
 
 class SearchRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     query: str = ""
     image_path: str | None = None
     max_price: float | None = Field(default=None, ge=0)

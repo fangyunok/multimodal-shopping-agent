@@ -3,7 +3,7 @@ from __future__ import annotations
 from .models import Product, SearchHit, SearchRequest
 from typing import Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Retriever(Protocol):
@@ -13,10 +13,12 @@ class Retriever(Protocol):
 
 
 class ProductIdsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     product_ids: list[str] = Field(min_length=2, max_length=10)
 
 
 class ProductIdInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     product_id: str
 
 
@@ -24,6 +26,15 @@ class ToolDefinition(BaseModel):
     name: str
     description: str
     parameters: dict
+
+
+class ToolCall(BaseModel):
+    name: str
+    arguments: dict
+
+
+class UnknownToolError(ValueError):
+    pass
 
 
 class ShoppingTools:
@@ -40,6 +51,20 @@ class ShoppingTools:
     def check_inventory(self, product_id: str) -> dict[str, int | str | bool]:
         product = self.by_id[product_id]
         return {"product_id": product_id, "stock": product.stock, "available": product.stock > 0}
+
+    def execute(self, call: ToolCall):
+        if call.name == "search_products":
+            request = SearchRequest.model_validate(call.arguments)
+            return self.search_products(request)
+        if call.name == "compare_products":
+            request = ProductIdsInput.model_validate(call.arguments)
+            return self.compare_products(request.product_ids)
+        if call.name == "check_inventory":
+            request = ProductIdInput.model_validate(call.arguments)
+            if request.product_id not in self.by_id:
+                raise KeyError(f"商品不存在: {request.product_id}")
+            return self.check_inventory(request.product_id)
+        raise UnknownToolError(f"未知工具: {call.name}")
 
     @staticmethod
     def definitions() -> list[ToolDefinition]:
