@@ -1,0 +1,10 @@
+services:
+  shopping-agent:
+    build: .
+    ports:
+      - "8010:8000"
+    environment:
+      RETRIEVER_BACKEND: baseline
+      CATALOG_PATH: /app/data/products.jsonl
+    restart: unless-stopped
+

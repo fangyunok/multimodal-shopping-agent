@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+.coverage
+.env
+data/raw
+data/processed
+data/external
+data/index
+outputs
+tests
+docs
+

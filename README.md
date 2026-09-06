@@ -110,6 +110,17 @@ curl -X POST http://127.0.0.1:8000/agent/image \
   -F "max_price=500"
 ```
 
+## Docker 部署
+
+容器默认使用无需GPU和模型下载的CPU基线，并以非root用户运行：
+
+```bash
+docker compose up --build -d
+curl http://127.0.0.1:8010/health
+```
+
+访问 `http://127.0.0.1:8010/docs`。镜像内置健康检查，GitHub Actions会在每次提交后同时执行Python测试和Docker构建。
+
 ## 工程结构
 
 ```text
