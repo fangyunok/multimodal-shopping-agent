@@ -5,6 +5,8 @@ __pycache__/
 .coverage
 .env
 data/index/
+data/raw/*
+!data/raw/README.md
+data/processed/
 outputs/
 *.egg-info/
-

@@ -16,6 +16,10 @@ class Product(BaseModel):
     image_path: str | None = None
     rating: float = Field(default=0, ge=0, le=5)
     stock: int = Field(default=0, ge=0)
+    source: str | None = None
+    license: str | None = None
+    split: Literal["train", "validation", "test"] | None = None
+    image_sha256: str | None = None
 
     def searchable_text(self) -> str:
         attrs = " ".join(f"{key} {value}" for key, value in self.attributes.items())
@@ -54,4 +58,3 @@ class AgentResponse(BaseModel):
     answer: str
     tool_trace: list[dict]
     hits: list[SearchHit] = Field(default_factory=list)
-

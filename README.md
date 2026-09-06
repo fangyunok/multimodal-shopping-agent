@@ -40,6 +40,19 @@ $env:INDEX_DIR="data/index/chinese-clip-base"
 
 `manifest.json` 会记录商品目录 SHA-256、模型名、向量维度和生成时间。商品目录发生变化或模型不一致时，服务拒绝加载旧索引。
 
+## 数据准备
+
+原始商品表支持 JSONL 和 CSV。每条商品必须记录 `source` 与 `license`，本地图片会验证格式、按 SHA-256 去重，并按照商品 ID 稳定切分：
+
+```bash
+.venv\\Scripts\\shopping-agent \
+  --prepare-data data/raw/products.jsonl \
+  --output-catalog data/processed/products.jsonl \
+  --image-dir data/processed/images
+```
+
+处理后的数据和图片默认不提交 Git，数据规范见 `docs/DATASET_CARD.md`。
+
 ## 快速开始
 
 ```bash
@@ -80,7 +93,7 @@ tests/                        单元与接口测试
 
 - [x] M0：仓库、数据契约、测试与 API 骨架
 - [x] M1：CPU 图文检索基线、工具调用与评测闭环
-- [ ] M2：中文 CLIP 向量化、持久化索引（均已接入）、真实商品图文数据
+- [ ] M2：中文 CLIP 向量化、持久化索引、真实商品图文数据管线（均已接入，待选数据集）
 - [ ] M3：视觉语言模型属性抽取和基于 schema 的 LLM 工具调用
 - [ ] M4：RAG 忠实度、工具参数、任务成功率、延迟与消融实验
 - [ ] M5：Gradio 演示、Docker、CI 和完整实验报告

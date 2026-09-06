@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .agent import ShoppingAgent
 from .encoders import ChineseClipEncoder
+from .dataset import prepare_dataset
 from .evaluation import evaluate
 from .indexing import build_index
 from .models import AgentRequest
@@ -23,7 +24,14 @@ def main() -> None:
     parser.add_argument("--build-index", metavar="DIRECTORY")
     parser.add_argument("--model", default="OFA-Sys/chinese-clip-vit-base-patch16")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--prepare-data", metavar="CSV_OR_JSONL")
+    parser.add_argument("--output-catalog", default="data/processed/products.jsonl")
+    parser.add_argument("--image-dir", default="data/processed/images")
     args = parser.parse_args()
+    if args.prepare_data:
+        summary = prepare_dataset(args.prepare_data, args.output_catalog, args.image_dir)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
     if args.build_index:
         manifest = build_index(args.catalog, args.build_index, ChineseClipEncoder(args.model, args.device), args.model)
         print(manifest.model_dump_json(indent=2))
