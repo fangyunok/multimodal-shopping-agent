@@ -1,0 +1,6 @@
+{"id":"shoe-001","title":"云步白色通勤运动鞋","category":"运动鞋","description":"轻量缓震，白色简约设计，适合通勤和日常步行","price":399,"attributes":{"颜色":"白色","风格":"简约","场景":"通勤"},"rating":4.8,"stock":23}
+{"id":"shoe-002","title":"城市灰复古跑鞋","category":"运动鞋","description":"灰色复古鞋型，透气网面，适合慢跑和休闲穿搭","price":459,"attributes":{"颜色":"灰色","风格":"复古","场景":"慢跑"},"rating":4.7,"stock":8}
+{"id":"shoe-003","title":"专业竞速碳板跑鞋","category":"运动鞋","description":"碳板推进与高回弹中底，适合竞速训练","price":899,"attributes":{"颜色":"橙色","风格":"运动","场景":"竞速"},"rating":4.9,"stock":5}
+{"id":"bag-001","title":"极简黑色通勤托特包","category":"箱包","description":"大容量防泼水面料，可容纳十四英寸笔记本","price":269,"attributes":{"颜色":"黑色","风格":"极简","场景":"通勤"},"rating":4.6,"stock":16}
+{"id":"shirt-001","title":"浅蓝棉质通勤衬衫","category":"服装","description":"纯棉面料，宽松版型，适合办公室通勤","price":199,"attributes":{"颜色":"浅蓝","材质":"纯棉","场景":"通勤"},"rating":4.5,"stock":0}
+

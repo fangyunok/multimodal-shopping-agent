@@ -1,0 +1,5 @@
+{"request":{"query":"白色简约通勤运动鞋","max_price":500,"top_k":3},"relevant_ids":["shoe-001"],"expected_tool":"search_products"}
+{"request":{"query":"复古灰色跑鞋","max_price":500,"top_k":3},"relevant_ids":["shoe-002"],"expected_tool":"search_products"}
+{"request":{"query":"通勤包 笔记本","category":"箱包","top_k":2},"relevant_ids":["bag-001"],"expected_tool":"search_products"}
+{"request":{"intent":"compare","product_ids":["shoe-001","shoe-002"]},"relevant_ids":[],"expected_tool":"compare_products"}
+
