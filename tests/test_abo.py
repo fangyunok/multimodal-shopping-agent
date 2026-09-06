@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from shopping_agent.abo import convert_abo, localized_value
+from shopping_agent.abo import convert_abo, fetch_abo_subset_images, localized_value
 
 
 def test_localized_value_prefers_requested_language() -> None:
@@ -48,3 +48,29 @@ def test_convert_extracted_abo_subset(tmp_path: Path) -> None:
     assert product["license"] == "CC-BY-4.0"
     assert Path(product["image_path"]).exists()
 
+
+def test_fetches_only_selected_images_and_resumes(tmp_path: Path) -> None:
+    metadata_dir = tmp_path / "listings" / "metadata"
+    image_metadata_dir = tmp_path / "images" / "metadata"
+    (tmp_path / "images" / "small").mkdir(parents=True)
+    metadata_dir.mkdir(parents=True)
+    image_metadata_dir.mkdir(parents=True)
+    with gzip.open(image_metadata_dir / "images.csv.gz", "wt", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=["image_id", "height", "width", "path"])
+        writer.writeheader()
+        writer.writerow({"image_id": "one", "height": 16, "width": 16, "path": "aa/one.jpg"})
+    with gzip.open(metadata_dir / "listings_0.json.gz", "wt", encoding="utf-8") as stream:
+        stream.write(json.dumps({"item_id": "one", "main_image_id": "one"}) + "\n")
+
+    calls = []
+
+    def fake_download(url: str, target: Path) -> None:
+        calls.append(url)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (8, 8), "white").save(target)
+
+    first = fetch_abo_subset_images(tmp_path, limit=1, workers=2, downloader=fake_download)
+    second = fetch_abo_subset_images(tmp_path, limit=1, workers=2, downloader=fake_download)
+    assert first == {"selected": 1, "downloaded": 1, "existing": 0, "failed": 0}
+    assert second == {"selected": 1, "downloaded": 0, "existing": 1, "failed": 0}
+    assert len(calls) == 1

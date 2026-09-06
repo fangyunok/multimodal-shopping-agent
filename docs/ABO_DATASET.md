@@ -29,6 +29,11 @@ AWS Open Data Registry 页面当前显示的许可标签与官方归档页存在
 
 ```bash
 shopping-agent \
+  --fetch-abo-images D:/datasets/abo \
+  --abo-limit 1000 \
+  --download-workers 8
+
+shopping-agent \
   --convert-abo D:/datasets/abo \
   --abo-limit 1000 \
   --abo-output data/raw/abo.jsonl
@@ -40,4 +45,3 @@ shopping-agent \
 ```
 
 适配器优先选择 `zh_CN`，其次选择 `en_US`，并关联 `main_image_id` 与 256px 图片。ABO 不提供可靠价格和实时库存，因此转换数据中的价格设为 0、库存设为 1，仅用于图文检索实验；价格和库存工具评测仍使用独立的可控数据。
-

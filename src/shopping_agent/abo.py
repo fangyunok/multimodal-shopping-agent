@@ -4,13 +4,17 @@ import csv
 import gzip
 import json
 import re
+import shutil
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .models import Product
 
 ABO_SOURCE = "https://amazon-berkeley-objects.s3.us-east-1.amazonaws.com/index.html"
 ABO_LICENSE = "CC-BY-4.0"
+ABO_SMALL_IMAGE_BASE = "http://amazon-berkeley-objects.s3.us-east-1.amazonaws.com/images/small"
 HTML_TAG = re.compile(r"<[^>]+>")
 
 
@@ -64,6 +68,49 @@ def iter_listings(paths: Iterable[Path]) -> Iterable[dict]:
             for line in stream:
                 if line.strip():
                     yield json.loads(line)
+
+
+def download_file(url: str, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_suffix(target.suffix + ".part")
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response, partial.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        partial.replace(target)
+    finally:
+        partial.unlink(missing_ok=True)
+
+
+def fetch_abo_subset_images(
+    root_dir: str | Path,
+    limit: int = 1000,
+    workers: int = 8,
+    downloader: Callable[[str, Path], None] = download_file,
+) -> dict[str, int]:
+    root = Path(root_dir).resolve()
+    listings, image_metadata, image_root = find_abo_paths(root)
+    image_paths = load_image_paths(image_metadata)
+    selected: list[str] = []
+    for item in iter_listings(listings):
+        relative = image_paths.get(str(item.get("main_image_id")))
+        if relative and relative not in selected:
+            selected.append(relative)
+        if len(selected) >= limit:
+            break
+    existing = [relative for relative in selected if (image_root / relative).exists()]
+    pending = [relative for relative in selected if not (image_root / relative).exists()]
+    failed = 0
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {
+            pool.submit(downloader, f"{ABO_SMALL_IMAGE_BASE}/{relative}", image_root / relative): relative
+            for relative in pending
+        }
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception:
+                failed += 1
+    return {"selected": len(selected), "downloaded": len(pending) - failed, "existing": len(existing), "failed": failed}
 
 
 def convert_abo(
@@ -130,4 +177,3 @@ def convert_abo(
         "skipped_missing_image": skipped_missing_image,
         "skipped_missing_title": skipped_missing_title,
     }
-

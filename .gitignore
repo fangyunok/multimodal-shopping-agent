@@ -8,5 +8,6 @@ data/index/
 data/raw/*
 !data/raw/README.md
 data/processed/
+data/external/
 outputs/
 *.egg-info/

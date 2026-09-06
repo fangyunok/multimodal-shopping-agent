@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from .agent import ShoppingAgent
-from .abo import convert_abo
+from .abo import convert_abo, fetch_abo_subset_images
 from .encoders import ChineseClipEncoder
 from .dataset import prepare_dataset
 from .evaluation import evaluate
@@ -31,7 +31,13 @@ def main() -> None:
     parser.add_argument("--convert-abo", metavar="EXTRACTED_ABO_ROOT")
     parser.add_argument("--abo-limit", type=int, default=1000)
     parser.add_argument("--abo-output", default="data/raw/abo.jsonl")
+    parser.add_argument("--fetch-abo-images", metavar="ABO_ROOT")
+    parser.add_argument("--download-workers", type=int, default=8)
     args = parser.parse_args()
+    if args.fetch_abo_images:
+        summary = fetch_abo_subset_images(args.fetch_abo_images, args.abo_limit, args.download_workers)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
     if args.convert_abo:
         summary = convert_abo(args.convert_abo, args.abo_output, args.abo_limit)
         print(json.dumps(summary, ensure_ascii=False, indent=2))

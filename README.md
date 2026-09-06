@@ -59,6 +59,12 @@ $env:INDEX_DIR="data/index/chinese-clip-base"
 .venv\\Scripts\\shopping-agent --convert-abo D:/datasets/abo --abo-limit 1000
 ```
 
+如果只下载了 metadata，可按清单并发获取所需的1000张小图：
+
+```bash
+.venv\\Scripts\\shopping-agent --fetch-abo-images D:/datasets/abo --abo-limit 1000
+```
+
 ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和署名要求见 `docs/ABO_DATASET.md`。
 
 ## 快速开始
