@@ -74,6 +74,8 @@ def test_offline_evaluation() -> None:
     assert result.constraint_pass_rate == 1.0
     assert result.retrieval_hit_rate >= 0.75
     assert result.parameter_accuracy == 1.0
+    assert result.task_success_rate == 1.0
+    assert result.average_tool_calls >= 1.0
 
 
 def test_image_search_baseline(tmp_path: Path) -> None:
