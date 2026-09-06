@@ -18,7 +18,7 @@
 - FastAPI 服务和自动化测试。
 - JPEG、PNG、WebP 图片上传接口（5 MB 限制与内容校验）。
 
-轻量图片特征只是 CPU 冒烟基线，不把颜色相似误称为语义理解。下一阶段将接入中文 CLIP，实现真正的以文搜图、以图搜图和图文联合检索；再接入视觉语言模型完成商品属性理解。
+轻量图片特征只是 CPU 冒烟基线，不把颜色相似误称为语义理解。项目也已接入中文 CLIP，实现共享向量空间中的以文搜图、以图搜图和图文联合检索；两种后端使用同一套 Recall@K/MRR 协议比较。
 
 项目已经提供可选的中文 CLIP 检索后端。首次启用会下载模型，本机 CPU 可以推理但较慢：
 
@@ -29,7 +29,7 @@ $env:MODEL_DEVICE="cpu"
 .venv\\Scripts\\uvicorn shopping_agent.app:app
 ```
 
-默认 `RETRIEVER_BACKEND=baseline`，自动化测试不下载模型。
+默认 `RETRIEVER_BACKEND=baseline`，自动化测试不下载模型。使用已下载权重时，可把 `CLIP_MODEL_PATH` 指向本地模型目录，同时保留 `CLIP_MODEL=OFA-Sys/chinese-clip-vit-base-patch16` 作为索引校验使用的标准模型 ID，并设置 `INDEX_DIR` 加载离线索引。
 
 真实数据准备完成后，离线构建并复用商品向量：
 
@@ -41,7 +41,7 @@ $env:MODEL_DEVICE="cpu"
 $env:INDEX_DIR="data/index/chinese-clip-base"
 ```
 
-`manifest.json` 会记录商品目录 SHA-256、模型名、向量维度和生成时间。商品目录发生变化或模型不一致时，服务拒绝加载旧索引。
+`--model` 可以是本地模型目录，`--model-id` 用于把标准模型 ID 写入索引。`manifest.json` 会记录商品目录 SHA-256、模型名、向量维度和生成时间。商品目录发生变化或模型不一致时，服务拒绝加载旧索引。
 
 ## 数据准备
 
@@ -86,7 +86,7 @@ ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和�
 .venv\\Scripts\\shopping-agent --catalog data/processed/products.jsonl --benchmark outputs/retrieval_benchmark.jsonl
 ```
 
-自动生成的查询必须经过人工抽查，最终测试集应补充同义改写、属性组合、类目歧义和不同视角图片。
+CLIP 后端可在上述命令后增加 `--retriever-backend clip --index-dir data/index/chinese-clip-base --model <本地模型目录>`。自动生成的查询必须经过人工抽查，最终测试集应补充同义改写、属性组合、类目歧义和不同视角图片。
 
 ## 快速开始
 

@@ -14,6 +14,7 @@ from .indexing import build_index
 from .models import AgentRequest
 from .retrieval import HybridRetriever
 from .retrieval_evaluation import evaluate_retrieval
+from .semantic_retrieval import SemanticRetriever
 from .tools import ShoppingTools
 
 
@@ -26,7 +27,11 @@ def main() -> None:
     parser.add_argument("--max-price", type=float)
     parser.add_argument("--build-index", metavar="DIRECTORY")
     parser.add_argument("--model", default="OFA-Sys/chinese-clip-vit-base-patch16")
+    parser.add_argument("--model-id", default="OFA-Sys/chinese-clip-vit-base-patch16")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--retriever-backend", choices=("baseline", "clip"), default="baseline")
+    parser.add_argument("--index-dir")
     parser.add_argument("--prepare-data", metavar="CSV_OR_JSONL")
     parser.add_argument("--output-catalog", default="data/processed/products.jsonl")
     parser.add_argument("--image-dir", default="data/processed/images")
@@ -52,10 +57,19 @@ def main() -> None:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return
     if args.build_index:
-        manifest = build_index(args.catalog, args.build_index, ChineseClipEncoder(args.model, args.device), args.model)
+        encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
+        manifest = build_index(args.catalog, args.build_index, encoder, args.model_id)
         print(manifest.model_dump_json(indent=2))
         return
-    retriever = HybridRetriever.from_jsonl(args.catalog)
+    if args.retriever_backend == "clip":
+        encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
+        retriever = (
+            SemanticRetriever.from_index(args.catalog, args.index_dir, encoder, args.model_id)
+            if args.index_dir
+            else SemanticRetriever.from_jsonl(args.catalog, encoder)
+        )
+    else:
+        retriever = HybridRetriever.from_jsonl(args.catalog)
     if args.build_benchmark:
         test_products = [product for product in retriever.products if product.split == "test"]
         cases = generate_attribute_cases(test_products)

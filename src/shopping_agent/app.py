@@ -27,8 +27,9 @@ def get_tools() -> ShoppingTools:
         from .encoders import ChineseClipEncoder
 
         model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
+        model_path = os.getenv("CLIP_MODEL_PATH", model_name)
         device = os.getenv("MODEL_DEVICE", "cpu")
-        encoder = ChineseClipEncoder(model_name, device)
+        encoder = ChineseClipEncoder(model_path, device)
         index_dir = os.getenv("INDEX_DIR")
         retriever = (
             SemanticRetriever.from_index(catalog, index_dir, encoder, model_name)
