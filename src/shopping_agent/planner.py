@@ -15,9 +15,17 @@ PRICE_PATTERNS = (
 
 class Plan(BaseModel):
     model_config = {"extra": "forbid"}
-    intent: Literal["search", "compare", "inventory"]
-    max_price: float | None = Field(default=None, ge=0)
-    category: str | None
+    intent: Literal["search", "compare", "inventory"] = Field(
+        description="用户目标：搜索商品、比较多个商品，或查询库存"
+    )
+    max_price: float | None = Field(
+        default=None,
+        ge=0,
+        description="用户明确表达的最高预算数值；例如'500元以内'填500，未表达上限才填null",
+    )
+    category: str | None = Field(
+        description="从系统给出的可用类目中选择；可根据同义词映射，无法确定时填null"
+    )
 
 
 class Planner(Protocol):

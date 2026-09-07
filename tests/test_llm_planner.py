@@ -18,6 +18,11 @@ def test_llm_planner_sends_schema_and_validates_response() -> None:
     assert plan.max_price == 500
     assert captured["temperature"] == 0
     assert captured["response_format"]["type"] == "json_schema"
+    system_prompt = captured["messages"][0]["content"]
+    assert "最高预算" in system_prompt
+    assert "输出intent必须与其完全相同" in system_prompt
+    schema = captured["response_format"]["json_schema"]["schema"]
+    assert "500元以内" in schema["properties"]["max_price"]["description"]
     assert planner.last_usage["total_tokens"] == 28
 
 
