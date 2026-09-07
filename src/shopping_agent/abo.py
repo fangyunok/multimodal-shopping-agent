@@ -86,16 +86,26 @@ def fetch_abo_subset_images(
     limit: int = 1000,
     workers: int = 8,
     downloader: Callable[[str, Path], None] = download_file,
+    include_other_images: bool = False,
 ) -> dict[str, int]:
     root = Path(root_dir).resolve()
     listings, image_metadata, image_root = find_abo_paths(root)
     image_paths = load_image_paths(image_metadata)
     selected: list[str] = []
+    selected_products = 0
     for item in iter_listings(listings):
-        relative = image_paths.get(str(item.get("main_image_id")))
-        if relative and relative not in selected:
-            selected.append(relative)
-        if len(selected) >= limit:
+        image_ids = [item.get("main_image_id")]
+        if include_other_images:
+            image_ids.extend(item.get("other_image_id") or [])
+        found_main = False
+        for position, image_id in enumerate(image_ids):
+            relative = image_paths.get(str(image_id))
+            if relative and relative not in selected:
+                selected.append(relative)
+                found_main = found_main or position == 0
+        if found_main:
+            selected_products += 1
+        if selected_products >= limit:
             break
     existing = [relative for relative in selected if (image_root / relative).exists()]
     pending = [relative for relative in selected if not (image_root / relative).exists()]
@@ -111,6 +121,38 @@ def fetch_abo_subset_images(
             except Exception:
                 failed += 1
     return {"selected": len(selected), "downloaded": len(pending) - failed, "existing": len(existing), "failed": failed}
+
+
+def build_cross_view_benchmark(
+    root_dir: str | Path, catalog_path: str | Path, output_path: str | Path
+) -> dict[str, int]:
+    root = Path(root_dir).resolve()
+    catalog = Path(catalog_path).resolve()
+    output = Path(output_path).resolve()
+    listings, image_metadata, image_root = find_abo_paths(root)
+    image_paths = load_image_paths(image_metadata)
+    products = [Product.model_validate_json(line) for line in catalog.read_text(encoding="utf-8").splitlines() if line.strip()]
+    by_item_id = {product.id.split(":", 1)[-1]: product for product in products}
+    cases = []
+    for item in iter_listings(listings):
+        product = by_item_id.get(str(item.get("item_id")))
+        if not product or product.split not in (None, "test"):
+            continue
+        for image_id in item.get("other_image_id") or []:
+            relative = image_paths.get(str(image_id))
+            query_image = image_root / relative if relative else None
+            if query_image and query_image.exists():
+                cases.append({
+                    "id": f"cross-view-{product.id}",
+                    "query_type": "cross_view_image",
+                    "query": "",
+                    "image_path": str(query_image.resolve()),
+                    "relevant_ids": [product.id],
+                })
+                break
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(json.dumps(case, ensure_ascii=False) for case in cases) + ("\n" if cases else ""), encoding="utf-8")
+    return {"products": len(products), "cross_view_cases": len(cases)}
 
 
 def convert_abo(

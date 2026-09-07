@@ -27,4 +27,5 @@ def test_benchmark_round_trip_and_metrics(tmp_path: Path) -> None:
     assert result["overall"]["recall_at_1"] == 1.0
     assert result["overall"]["ndcg_at_10"] == 1.0
     assert result["overall"]["confidence_intervals_95"]["mrr"] == [1.0, 1.0]
+    assert result["failures"] == []
     assert result["by_query_type"]["attribute_query"]["mrr"] == 1.0

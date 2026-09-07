@@ -70,7 +70,7 @@ $env:INDEX_DIR="data/index/chinese-clip-base"
 .venv\\Scripts\\shopping-agent --fetch-abo-images D:/datasets/abo --abo-limit 1000
 ```
 
-ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和署名要求见 `docs/ABO_DATASET.md`。
+加入 `--include-other-images` 可同时下载 `other_image_id` 指向的其他视角；随后使用 `--build-cross-view-benchmark D:/datasets/abo` 可生成查询图不同于索引主图的无泄漏图片 benchmark。ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和署名要求见 `docs/ABO_DATASET.md`。
 
 检索评测统一输出 Recall@1/5/10、MRR、nDCG@K 与固定随机种子的 bootstrap 95% 置信区间：
 
@@ -79,7 +79,7 @@ ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和�
 .venv\\Scripts\\shopping-agent --catalog data/processed/products.jsonl --evaluate-retrieval image
 ```
 
-标题或原图检索自身只作为链路检查，不能代表语义检索效果。
+标题或原图检索自身只作为链路检查，不能代表语义检索效果。评测结果还会列出未排在首位的逐条失败案例及实际召回 ID，便于错误分析。
 
 生成不复制商品标题的属性需求评测集，并运行统一指标：
 

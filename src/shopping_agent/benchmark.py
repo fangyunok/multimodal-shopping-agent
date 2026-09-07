@@ -81,12 +81,25 @@ def bootstrap_confidence_intervals(
 def evaluate_cases(retriever, cases: list[RetrievalCase], top_k: int = 10) -> dict:
     ranks: list[int | None] = []
     by_type: dict[str, list[int | None]] = {}
+    failures: list[dict] = []
     for case in cases:
         hits = retriever.search(SearchRequest(query=case.query, image_path=case.image_path, top_k=top_k))
         rank = next((index for index, hit in enumerate(hits, start=1) if hit.product.id in case.relevant_ids), None)
         ranks.append(rank)
         by_type.setdefault(case.query_type, []).append(rank)
+        if rank is None or rank > 1:
+            failures.append({
+                "case_id": case.id,
+                "query_type": case.query_type,
+                "relevant_ids": case.relevant_ids,
+                "rank": rank,
+                "retrieved_ids": [hit.product.id for hit in hits],
+            })
 
     overall = _metrics(ranks, top_k)
     overall["confidence_intervals_95"] = bootstrap_confidence_intervals(ranks, top_k)
-    return {"overall": overall, "by_query_type": {name: _metrics(group, top_k) for name, group in sorted(by_type.items())}}
+    return {
+        "overall": overall,
+        "by_query_type": {name: _metrics(group, top_k) for name, group in sorted(by_type.items())},
+        "failures": failures,
+    }

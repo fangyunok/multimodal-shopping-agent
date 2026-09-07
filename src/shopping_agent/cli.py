@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from .agent import ShoppingAgent
-from .abo import convert_abo, fetch_abo_subset_images
+from .abo import build_cross_view_benchmark, convert_abo, fetch_abo_subset_images
 from .benchmark import evaluate_cases, generate_attribute_cases, read_benchmark, write_benchmark
 from .encoders import ChineseClipEncoder
 from .dataset import prepare_dataset
@@ -43,12 +43,22 @@ def main() -> None:
     parser.add_argument("--abo-output", default="data/raw/abo.jsonl")
     parser.add_argument("--fetch-abo-images", metavar="ABO_ROOT")
     parser.add_argument("--download-workers", type=int, default=8)
+    parser.add_argument("--include-other-images", action="store_true")
+    parser.add_argument("--build-cross-view-benchmark", metavar="ABO_ROOT")
+    parser.add_argument("--cross-view-output", default="outputs/cross_view_benchmark.jsonl")
     parser.add_argument("--evaluate-retrieval", choices=("text", "image"))
     parser.add_argument("--build-benchmark", metavar="OUTPUT_JSONL")
     parser.add_argument("--benchmark", metavar="BENCHMARK_JSONL")
     args = parser.parse_args()
+    if args.build_cross_view_benchmark:
+        summary = build_cross_view_benchmark(args.build_cross_view_benchmark, args.catalog, args.cross_view_output)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
     if args.fetch_abo_images:
-        summary = fetch_abo_subset_images(args.fetch_abo_images, args.abo_limit, args.download_workers)
+        summary = fetch_abo_subset_images(
+            args.fetch_abo_images, args.abo_limit, args.download_workers,
+            include_other_images=args.include_other_images,
+        )
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return
     if args.convert_abo:

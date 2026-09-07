@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from shopping_agent.abo import convert_abo, fetch_abo_subset_images, localized_value
+from shopping_agent.abo import build_cross_view_benchmark, convert_abo, fetch_abo_subset_images, localized_value
 
 
 def test_localized_value_prefers_requested_language() -> None:
@@ -74,3 +74,30 @@ def test_fetches_only_selected_images_and_resumes(tmp_path: Path) -> None:
     assert first == {"selected": 1, "downloaded": 1, "existing": 0, "failed": 0}
     assert second == {"selected": 1, "downloaded": 0, "existing": 1, "failed": 0}
     assert len(calls) == 1
+
+
+def test_builds_cross_view_benchmark_from_other_image(tmp_path: Path) -> None:
+    metadata_dir = tmp_path / "listings" / "metadata"
+    image_metadata_dir = tmp_path / "images" / "metadata"
+    image_dir = tmp_path / "images" / "small" / "aa"
+    metadata_dir.mkdir(parents=True)
+    image_metadata_dir.mkdir(parents=True)
+    image_dir.mkdir(parents=True)
+    Image.new("RGB", (8, 8), "blue").save(image_dir / "other.jpg")
+    with gzip.open(image_metadata_dir / "images.csv.gz", "wt", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=["image_id", "height", "width", "path"])
+        writer.writeheader()
+        writer.writerow({"image_id": "other", "height": 8, "width": 8, "path": "aa/other.jpg"})
+    with gzip.open(metadata_dir / "listings_0.json.gz", "wt", encoding="utf-8") as stream:
+        stream.write(json.dumps({"item_id": "SKU1", "main_image_id": "main", "other_image_id": ["other"]}) + "\n")
+    catalog = tmp_path / "products.jsonl"
+    catalog.write_text(
+        json.dumps({"id": "amazon:SKU1", "title": "shoe", "category": "shoe", "description": "x", "price": 0, "split": "test"}) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "cross-view.jsonl"
+    summary = build_cross_view_benchmark(tmp_path, catalog, output)
+    case = json.loads(output.read_text(encoding="utf-8"))
+    assert summary["cross_view_cases"] == 1
+    assert case["relevant_ids"] == ["amazon:SKU1"]
+    assert Path(case["image_path"]).name == "other.jpg"
