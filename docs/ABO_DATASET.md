@@ -45,3 +45,16 @@ shopping-agent \
 ```
 
 适配器优先选择 `zh_CN`，其次选择 `en_US`，并关联 `main_image_id` 与 256px 图片。ABO 不提供可靠价格和实时库存，因此转换数据中的价格设为 0、库存设为 1，仅用于图文检索实验；价格和库存工具评测仍使用独立的可控数据。
+
+## 一键复现实验矩阵
+
+准备好 ABO metadata 根目录和本地 Chinese-CLIP 权重后，在 Windows PowerShell 运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_abo_clip_experiment.ps1 `
+  -AboRoot D:/datasets/abo `
+  -ModelPath D:/models/chinese-clip-vit-base-patch16 `
+  -Limit 100
+```
+
+脚本会依次下载主图/其他视角、转换和稳定划分数据、生成属性与跨视角 benchmark、构建文本-only/图片-only/图文索引，并运行词法、RGB、CLIP 与融合对照。原始数据、模型、处理后图片、索引和输出均位于 `.gitignore` 覆盖的目录。

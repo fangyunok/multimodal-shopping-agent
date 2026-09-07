@@ -4,6 +4,8 @@
 
 求职材料：[简历项目描述](docs/RESUME_PROJECT.md)｜[面试讲解与追问](docs/INTERVIEW_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)
 
+真实多模态实验可通过 `scripts/run_abo_clip_experiment.ps1` 一次复现；参数和所需 ABO 文件见 [数据集说明](docs/ABO_DATASET.md)。
+
 ## 当前阶段：CPU MVP
 
 本阶段不依赖显卡或外部 API，确保任何人克隆仓库后都能复现：
