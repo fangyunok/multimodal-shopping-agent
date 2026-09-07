@@ -16,6 +16,7 @@ from .llm_planner import LLMPlanner
 from .indexing import build_index
 from .models import AgentRequest
 from .planner import RulePlanner
+from .planner_evaluation import evaluate_planner
 from .retrieval import HybridRetriever
 from .retrieval_evaluation import evaluate_retrieval
 from .semantic_retrieval import SemanticRetriever
@@ -41,6 +42,7 @@ def main() -> None:
     parser.add_argument("--planner-backend", choices=("rule", "llm"), default="rule")
     parser.add_argument("--llm-base-url", default=os.getenv("LLM_BASE_URL"))
     parser.add_argument("--llm-model", default=os.getenv("LLM_MODEL"))
+    parser.add_argument("--evaluate-planner", metavar="JSONL")
     parser.add_argument("--prepare-data", metavar="CSV_OR_JSONL")
     parser.add_argument("--output-catalog", default="data/processed/products.jsonl")
     parser.add_argument("--image-dir", default="data/processed/images")
@@ -113,6 +115,9 @@ def main() -> None:
         planner = LLMPlanner(categories, args.llm_base_url, args.llm_model, os.getenv("LLM_API_KEY", ""))
     else:
         planner = RulePlanner(categories)
+    if args.evaluate_planner:
+        print(json.dumps(evaluate_planner(planner, args.evaluate_planner), ensure_ascii=False, indent=2))
+        return
     agent = ShoppingAgent(tools, planner)
     if args.evaluate:
         print(json.dumps(evaluate(agent, args.evaluate).as_dict(), ensure_ascii=False, indent=2))

@@ -6,6 +6,12 @@
 
 Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible LLM 后端；配置与公平评测方法见 [LLM Planner 文档](docs/LLM_PLANNER.md)。
 
+项目包含 [20 条开发集与 100 条锁定 Planner 测试集](docs/PLANNER_DATASET.md)。运行规则基线：
+
+```powershell
+.venv\Scripts\shopping-agent --catalog data/products.jsonl --evaluate-planner data/planner_test.jsonl
+```
+
 真实多模态实验可通过 `scripts/run_abo_clip_experiment.ps1` 一次复现；参数和所需 ABO 文件见 [数据集说明](docs/ABO_DATASET.md)。
 
 ## 当前阶段：CPU MVP
