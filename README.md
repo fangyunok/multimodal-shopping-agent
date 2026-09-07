@@ -29,7 +29,7 @@ $env:MODEL_DEVICE="cpu"
 .venv\\Scripts\\uvicorn shopping_agent.app:app
 ```
 
-默认 `RETRIEVER_BACKEND=baseline`，自动化测试不下载模型。使用已下载权重时，可把 `CLIP_MODEL_PATH` 指向本地模型目录，同时保留 `CLIP_MODEL=OFA-Sys/chinese-clip-vit-base-patch16` 作为索引校验使用的标准模型 ID，并设置 `INDEX_DIR` 加载离线索引。
+默认 `RETRIEVER_BACKEND=baseline`，自动化测试不下载模型。可设置 `RETRIEVER_BACKEND=fusion` 使用词法与 CLIP 分数融合，并通过 `LEXICAL_WEIGHT` 调整词法权重。使用已下载权重时，可把 `CLIP_MODEL_PATH` 指向本地模型目录，同时保留 `CLIP_MODEL=OFA-Sys/chinese-clip-vit-base-patch16` 作为索引校验使用的标准模型 ID，并设置 `INDEX_DIR` 加载离线索引。
 
 真实数据准备完成后，离线构建并复用商品向量：
 

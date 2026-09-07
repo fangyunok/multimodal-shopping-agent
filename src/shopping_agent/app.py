@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
 from .agent import ShoppingAgent
+from .fusion_retrieval import ScoreFusionRetriever
 from .models import AgentRequest, AgentResponse, SearchHit, SearchRequest
 from .retrieval import HybridRetriever
 from .semantic_retrieval import SemanticRetriever
@@ -23,7 +24,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 def get_tools() -> ShoppingTools:
     catalog = Path(os.getenv("CATALOG_PATH", ROOT / "data" / "products.jsonl"))
     backend = os.getenv("RETRIEVER_BACKEND", "baseline").lower()
-    if backend == "clip":
+    if backend in {"clip", "fusion"}:
         from .encoders import ChineseClipEncoder
 
         model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
@@ -36,6 +37,10 @@ def get_tools() -> ShoppingTools:
             if index_dir
             else SemanticRetriever.from_jsonl(catalog, encoder)
         )
+        if backend == "fusion":
+            retriever = ScoreFusionRetriever(
+                HybridRetriever.from_jsonl(catalog), retriever, float(os.getenv("LEXICAL_WEIGHT", "0.65"))
+            )
         return ShoppingTools(retriever)
     if backend != "baseline":
         raise ValueError(f"不支持的 RETRIEVER_BACKEND: {backend}")

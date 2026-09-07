@@ -10,6 +10,7 @@ from .benchmark import evaluate_cases, generate_attribute_cases, read_benchmark,
 from .encoders import ChineseClipEncoder
 from .dataset import prepare_dataset
 from .evaluation import evaluate
+from .fusion_retrieval import ScoreFusionRetriever
 from .indexing import build_index
 from .models import AgentRequest
 from .retrieval import HybridRetriever
@@ -31,7 +32,8 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--image-weight", type=float, default=0.5)
-    parser.add_argument("--retriever-backend", choices=("baseline", "clip"), default="baseline")
+    parser.add_argument("--retriever-backend", choices=("baseline", "clip", "fusion"), default="baseline")
+    parser.add_argument("--lexical-weight", type=float, default=0.65)
     parser.add_argument("--index-dir")
     parser.add_argument("--prepare-data", metavar="CSV_OR_JSONL")
     parser.add_argument("--output-catalog", default="data/processed/products.jsonl")
@@ -62,13 +64,14 @@ def main() -> None:
         manifest = build_index(args.catalog, args.build_index, encoder, args.model_id, args.image_weight)
         print(manifest.model_dump_json(indent=2))
         return
-    if args.retriever_backend == "clip":
+    if args.retriever_backend in {"clip", "fusion"}:
         encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
-        retriever = (
+        semantic = (
             SemanticRetriever.from_index(args.catalog, args.index_dir, encoder, args.model_id)
             if args.index_dir
             else SemanticRetriever.from_jsonl(args.catalog, encoder)
         )
+        retriever = ScoreFusionRetriever(HybridRetriever.from_jsonl(args.catalog), semantic, args.lexical_weight) if args.retriever_backend == "fusion" else semantic
     else:
         retriever = HybridRetriever.from_jsonl(args.catalog)
     if args.build_benchmark:
