@@ -207,4 +207,26 @@
 - 评测器同时记录 P50/P95 延迟和 prompt/completion/total token 数，便于比较 LLM 的效果、延迟与成本；
 - `scripts/run_planner_comparison.ps1` 可依次运行 Rule 锁定集、LLM 开发集和 LLM 锁定集。
 
-目前未填写真实 LLM 成绩：本机没有可用的 OpenAI-compatible 推理服务，也尚未获得付费 GPU 授权。该空缺是实验状态的如实记录，不使用模拟结果代替。下一步是在获得接口或 GPU 后，以固定模型、temperature=0 和同一套 100 条锁定数据运行一次对比。
+该阶段没有使用模拟结果代替真实 LLM 成绩；随后获得 GPU 预算后运行的首次真实对照记录如下。
+
+## 2026-09-07：Qwen2.5-3B LLM Planner 首次真实实验
+
+### 配置
+
+- GPU：单卡 NVIDIA RTX 3090 24GB；
+- 服务：vLLM 0.28.0，OpenAI-compatible API；
+- 模型：`Qwen/Qwen2.5-3B-Instruct`，BF16，temperature=0，最大上下文 4096；
+- 数据：20 条开发集用于诊断，100 条锁定测试集只报告结果；
+- 输出受 Pydantic 生成的 JSON Schema 约束，并在应用侧二次校验。
+
+### 结果
+
+| Planner / 数据集 | Intent Acc. | Budget Acc. | Category Acc. | Joint Acc. | Invalid Rate | P50 | P95 | Tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Rule / test-100 | 0.75 | 0.87 | 0.49 | 0.36 | 0.00 | 0.007 ms | 0.011 ms | 0 |
+| Qwen2.5-3B / dev-20 | 0.75 | 0.65 | 0.95 | 0.35 | 0.00 | 183.5 ms | 200.1 ms | 2,118 |
+| Qwen2.5-3B / test-100 | 0.78 | 0.66 | 0.87 | 0.51 | 0.10 | 188.1 ms | 236.1 ms | 10,493 |
+
+Qwen2.5-3B 将锁定测试集的联合准确率从 0.36 提升到 0.51，类目准确率从 0.49 提升到 0.87，证明语义同义表达是 LLM 的主要优势；代价是约 188 ms 的中位规划延迟，并出现 10% 应用层无效规划。预算字段仍是主要短板：测试集预算准确率只有 0.66，预算切片 joint accuracy 为 0。显式 intent 切片有 60% 无效输出，说明 prompt 对外部 intent 约束表达不够稳定。
+
+该结果不包装为最终最优值。后续只根据开发集调整 prompt（加强预算数值提取和显式 intent 优先级），再运行一次开发集；开发集改善后才补跑一次锁定测试集，并保留本次结果作为初始基线。
