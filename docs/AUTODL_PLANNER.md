@@ -22,6 +22,8 @@ bash scripts/autodl_run_planner.sh
 
 脚本会创建隔离环境、安装 vLLM、启动 OpenAI-compatible 服务、运行 Rule 基线、20 条 LLM 开发集和 100 条锁定测试集。结果保存在 `outputs/planner/`。
 
+AutoDL 默认软件源缺少 `uv` 时，脚本仅对该安装步骤使用官方 PyPI；模型下载可通过 `HF_ENDPOINT` 指向可访问的 Hugging Face 镜像。
+
 下载 `rule-test.json`、`llm-dev.json` 和 `llm-test.json` 后，立刻在 AutoDL 控制台点击“关机”。脚本会停止 vLLM，但无法代替用户关闭云实例。计费以实例开关机时间为准，而不是 GPU 是否正在运算。
 
 不要把 AutoDL Token、密码或其他密钥写入仓库，也不要把它们发到聊天中。

@@ -19,7 +19,9 @@ trap cleanup EXIT INT TERM
 
 cd "$PROJECT_ROOT"
 mkdir -p "$OUTPUT_DIR"
-python -m pip install --upgrade uv
+if ! command -v uv >/dev/null 2>&1; then
+  python -m pip install --index-url https://pypi.org/simple uv
+fi
 if [[ ! -x "$VENV/bin/python" ]]; then
   uv venv "$VENV" --python 3.12 --seed
 fi
