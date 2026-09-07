@@ -27,6 +27,7 @@ def evaluate_planner(planner: Planner, dataset_path: str | Path) -> dict:
     rows = []
     latencies = []
     failures = []
+    token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     for case in cases:
         started = time.perf_counter()
         error = None
@@ -36,6 +37,8 @@ def evaluate_planner(planner: Planner, dataset_path: str | Path) -> dict:
             actual = None
             error = type(caught).__name__
         latencies.append((time.perf_counter() - started) * 1000)
+        for name in token_usage:
+            token_usage[name] += int(getattr(planner, "last_usage", {}).get(name, 0))
         checks = {
             "intent": actual is not None and actual.intent == case.expected.intent,
             "max_price": actual is not None and actual.max_price == case.expected.max_price,
@@ -67,6 +70,7 @@ def evaluate_planner(planner: Planner, dataset_path: str | Path) -> dict:
     percentile = lambda fraction: ordered[max(0, min(math.ceil(fraction * len(ordered)) - 1, len(ordered) - 1))] if ordered else 0.0
     overall = summarize(rows)
     overall.update({"latency_p50_ms": percentile(0.5), "latency_p95_ms": percentile(0.95)})
+    overall["token_usage"] = token_usage
     tags = sorted({tag for case in cases for tag in case.tags})
     by_tag = {tag: summarize([row for row in rows if tag in row["case"].tags]) for tag in tags}
     return {"overall": overall, "by_tag": by_tag, "failures": failures}

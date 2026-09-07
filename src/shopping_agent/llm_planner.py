@@ -27,6 +27,7 @@ class LLMPlanner:
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
         self.transport = transport or self._request
+        self.last_usage: dict[str, int] = {}
 
     def _request(self, payload: dict) -> dict:
         headers = {"Content-Type": "application/json"}
@@ -42,6 +43,9 @@ class LLMPlanner:
             return json.loads(response.read().decode("utf-8"))
 
     def plan(self, query: str, requested_intent: str = "auto") -> Plan:
+        # Avoid attributing a previous request's usage when this request fails
+        # before the provider returns a response.
+        self.last_usage = {}
         schema = Plan.model_json_schema()
         prompt = (
             "你是电商购物Agent的规划器。只输出一个JSON对象，不要Markdown。"
@@ -58,6 +62,11 @@ class LLMPlanner:
             "response_format": {"type": "json_schema", "json_schema": {"name": "shopping_plan", "schema": schema}},
         }
         response = self.transport(payload)
+        usage = response.get("usage", {}) if isinstance(response, dict) else {}
+        self.last_usage = {
+            key: int(usage.get(key) or 0)
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+        }
         try:
             content = response["choices"][0]["message"]["content"]
             plan = Plan.model_validate_json(content)

@@ -25,6 +25,17 @@ $env:LLM_API_KEY=""
 
 本地 vLLM 通常不需要 API Key；云端兼容接口应通过环境变量注入。CLI 可使用 `--planner-backend llm --llm-base-url ... --llm-model ...`。在真实模型服务启动前，自动化测试只使用注入的模拟 transport，不发起网络请求，也不产生费用。
 
+模型服务启动后可一条命令运行公平对照：
+
+```powershell
+$env:LLM_API_KEY="仅在云接口需要时设置"
+powershell -ExecutionPolicy Bypass -File scripts/run_planner_comparison.ps1 `
+  -BaseUrl http://127.0.0.1:8001 `
+  -Model Qwen/Qwen2.5-3B-Instruct
+```
+
+输出包含分项/联合准确率、非法输出率、按标签切片、失败案例、P50/P95 延迟和接口返回的 prompt/completion/total token 数。
+
 ## 公平对照
 
 Rule 与 LLM Planner 必须使用同一锁定测试集。Prompt 只允许在开发集修改；正式测试比较工具选择、参数 exact match、非法规划率、任务成功率、平均步骤、P50/P95 延迟及 token/费用。模型或 Prompt 版本必须写入实验记录。

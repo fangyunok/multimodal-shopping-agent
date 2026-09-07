@@ -197,3 +197,14 @@
 ### 一键复现验证
 
 在项目 `.venv` 原本未安装 torch/transformers 的条件下，完整执行 `scripts/run_abo_clip_experiment.ps1`：脚本成功安装 PyTorch 2.14.0 CPU 与 Transformers 4.57.6，补齐 4 张先前网络失败图片，重新生成 100 商品、70/18/12 划分、12 条属性查询、12 条跨视角查询和三套 512 维索引，并复现表中全部指标。脚本对每个外部命令显式检查退出码，中间任一步失败都会终止。
+
+## 2026-09-07：LLM Planner 数据集与规则基线
+
+- 人工编写 20 条开发集和 100 条锁定测试集，二者查询不重复；测试集覆盖搜索、比较、库存、预算、同义表达、显式意图、不充分信息和对抗输入；
+- 测试集锁定后只用于最终对比，不根据其结果修改 prompt；
+- Rule Planner 在 100 条锁定集上的 intent accuracy 为 0.75、max-price accuracy 为 0.87、category accuracy 为 0.49、joint accuracy 为 0.36、invalid output rate 为 0；
+- 在“字段有明确标注”的子集上 exact joint accuracy 为 0.9524，而 synonym 子集 joint accuracy 为 0，清楚暴露了规则方法的泛化短板；
+- 评测器同时记录 P50/P95 延迟和 prompt/completion/total token 数，便于比较 LLM 的效果、延迟与成本；
+- `scripts/run_planner_comparison.ps1` 可依次运行 Rule 锁定集、LLM 开发集和 LLM 锁定集。
+
+目前未填写真实 LLM 成绩：本机没有可用的 OpenAI-compatible 推理服务，也尚未获得付费 GPU 授权。该空缺是实验状态的如实记录，不使用模拟结果代替。下一步是在获得接口或 GPU 后，以固定模型、temperature=0 和同一套 100 条锁定数据运行一次对比。

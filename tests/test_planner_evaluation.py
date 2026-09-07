@@ -15,5 +15,6 @@ def test_planner_evaluation_reports_component_and_tag_metrics(tmp_path) -> None:
     assert result["overall"]["cases"] == 2
     assert result["overall"]["joint_accuracy"] == 0.5
     assert result["overall"]["invalid_output_rate"] == 0
+    assert result["overall"]["token_usage"]["total_tokens"] == 0
     assert result["by_tag"]["search"]["joint_accuracy"] == 1
     assert result["failures"][0]["id"] == "hard"
