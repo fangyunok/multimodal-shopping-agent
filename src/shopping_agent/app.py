@@ -59,7 +59,7 @@ def demo_page() -> FileResponse:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "retriever_backend": os.getenv("RETRIEVER_BACKEND", "baseline").lower()}
 
 
 @app.get("/tools", response_model=list[ToolDefinition])

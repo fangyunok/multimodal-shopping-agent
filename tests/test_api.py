@@ -16,7 +16,7 @@ def test_demo_page() -> None:
 
 
 def test_health() -> None:
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health").json() == {"status": "ok", "retriever_backend": "baseline"}
 
 
 def test_tool_registry_exposes_json_schemas() -> None:
