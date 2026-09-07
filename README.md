@@ -2,6 +2,8 @@
 
 一个面向求职作品集的、可复现的电商智能体项目：图文混合检索（RAG）、商品搜索/库存/对比工具调用，以及端到端离线评测。
 
+求职材料：[简历项目描述](docs/RESUME_PROJECT.md)｜[面试讲解与追问](docs/INTERVIEW_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)
+
 ## 当前阶段：CPU MVP
 
 本阶段不依赖显卡或外部 API，确保任何人克隆仓库后都能复现：
@@ -149,10 +151,11 @@ tests/                        单元与接口测试
 
 - [x] M0：仓库、数据契约、测试与 API 骨架
 - [x] M1：CPU 图文检索基线、工具调用与评测闭环
-- [ ] M2：中文 CLIP 向量化、持久化索引、真实商品图文数据管线（均已接入，待选数据集）
-- [ ] M3：视觉语言模型属性抽取和基于 schema 的 LLM 工具调用
-- [ ] M4：RAG 忠实度、工具参数、任务成功率、延迟与消融实验
-- [ ] M5：Gradio 演示、Docker、CI 和完整实验报告
+- [x] M2：Chinese-CLIP、持久化索引、ABO 数据管线与无泄漏跨视角评测
+- [x] M3 基线：规则 Planner、JSON Schema Dispatcher、搜索/库存/对比工具及错误轨迹
+- [x] M4 基线：RAG 引用忠实度、工具参数、任务成功率、延迟、置信区间与消融实验
+- [x] M5 CPU 版：内置 Web 演示、FastAPI、Docker、CI 和一键复现脚本
+- [ ] 扩展：更大分层数据集、LLM/VLM Planner 与细粒度 hard-negative 重排
 
 ## GPU 规划
 
