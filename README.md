@@ -4,7 +4,7 @@
 
 求职材料：[简历项目描述](docs/RESUME_PROJECT.md)｜[面试讲解与追问](docs/INTERVIEW_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)
 
-Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible LLM 后端；配置与公平评测方法见 [LLM Planner 文档](docs/LLM_PLANNER.md)。
+Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible LLM 后端；配置与公平评测方法见 [LLM Planner 文档](docs/LLM_PLANNER.md)，GPU 复现实验见 [AutoDL 指南](docs/AUTODL_PLANNER.md)。
 
 项目包含 [20 条开发集与 100 条锁定 Planner 测试集](docs/PLANNER_DATASET.md)。运行规则基线：
 
@@ -165,7 +165,8 @@ tests/                        单元与接口测试
 - [x] M3 基线：规则 Planner、JSON Schema Dispatcher、搜索/库存/对比工具及错误轨迹
 - [x] M4 基线：RAG 引用忠实度、工具参数、任务成功率、延迟、置信区间与消融实验
 - [x] M5 CPU 版：内置 Web 演示、FastAPI、Docker、CI 和一键复现脚本
-- [ ] 扩展：更大分层数据集、LLM/VLM Planner 与细粒度 hard-negative 重排
+- [x] LLM Planner 工程版：Schema 约束、20 条开发集、100 条锁定测试集和成本统计
+- [ ] 扩展：真实 LLM 对照、更大分层数据集、VLM Planner 与细粒度 hard-negative 重排
 
 ## GPU 规划
 
