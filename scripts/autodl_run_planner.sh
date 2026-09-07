@@ -27,6 +27,7 @@ if [[ ! -x "$VENV/bin/python" ]]; then
 fi
 uv pip install --python "$VENV/bin/python" vllm --torch-backend=auto
 uv pip install --python "$VENV/bin/python" -e .
+export PATH="$VENV/bin:$PATH"
 
 "$VENV/bin/vllm" serve "$MODEL" --host 127.0.0.1 --port "$PORT" \
   --dtype auto --max-model-len 4096 --gpu-memory-utilization 0.85 \
