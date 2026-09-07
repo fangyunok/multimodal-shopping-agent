@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pydantic import ValidationError
+
 from .models import AgentRequest, AgentResponse, SearchRequest
 from .planner import RulePlanner
 from .tools import ShoppingTools, ToolCall
@@ -28,7 +30,12 @@ class ShoppingAgent:
             status = f"有货，剩余 {inventory['stock']} 件" if inventory["available"] else "暂时无货"
             return AgentResponse(intent=intent, answer=f"商品 {product_id} {status}。", tool_trace=trace)
         if intent == "compare":
-            products = self.tools.execute(ToolCall(name="compare_products", arguments={"product_ids": request.product_ids}))
+            arguments = {"product_ids": request.product_ids}
+            try:
+                products = self.tools.execute(ToolCall(name="compare_products", arguments=arguments))
+            except ValidationError as error:
+                trace.append({"tool": "compare_products", "arguments": arguments, "error": "invalid_arguments"})
+                return AgentResponse(intent=intent, answer="请至少提供两个有效商品 ID 进行对比。", tool_trace=trace)
             trace.append({"tool": "compare_products", "arguments": {"product_ids": request.product_ids}, "result_count": len(products)})
             if len(products) < 2:
                 return AgentResponse(intent=intent, answer="请至少提供两个有效商品 ID 进行对比。", tool_trace=trace)

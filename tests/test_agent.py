@@ -41,6 +41,12 @@ def test_compare_tool() -> None:
     assert "云步白色通勤运动鞋" in response.answer
 
 
+def test_compare_with_one_product_is_rejected_without_crashing() -> None:
+    response = make_agent().run(AgentRequest(intent="compare", product_ids=["shoe-001"]))
+    assert response.tool_trace[0]["error"] == "invalid_arguments"
+    assert "至少提供两个" in response.answer
+
+
 def test_inventory_intent_calls_inventory_tool() -> None:
     response = make_agent().run(AgentRequest(query="这个商品有货吗", product_ids=["shoe-001"]))
     assert response.intent == "inventory"
@@ -76,6 +82,9 @@ def test_offline_evaluation() -> None:
     assert result.parameter_accuracy == 1.0
     assert result.task_success_rate == 1.0
     assert result.average_tool_calls >= 1.0
+    assert 0 < result.invalid_tool_call_rate < 0.1
+    assert result.latency_p50_ms >= 0.0
+    assert result.latency_p95_ms >= result.latency_p50_ms
 
 
 def test_image_search_baseline(tmp_path: Path) -> None:

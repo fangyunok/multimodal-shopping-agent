@@ -4,3 +4,9 @@
 {"request":{"intent":"compare","product_ids":["shoe-001","shoe-002"]},"relevant_ids":[],"expected_tool":"compare_products","expected_answer_contains":["云步白色通勤运动鞋","城市灰复古跑鞋"]}
 {"request":{"query":"想找500元以内的运动鞋","top_k":3},"relevant_ids":["shoe-001","shoe-002"],"expected_tool":"search_products","expected_arguments":{"max_price":500.0,"category":"运动鞋"},"expected_answer_contains":["¥399"],"expected_returned_ids":["shoe-001","shoe-002"]}
 {"request":{"query":"这件商品还有库存吗","product_ids":["shoe-001"]},"relevant_ids":[],"expected_tool":"check_inventory","expected_arguments":{"product_id":"shoe-001"},"expected_answer_contains":["剩余 23 件"]}
+{"request":{"query":"浅蓝纯棉通勤衬衫","category":"服装","max_price":200},"relevant_ids":["shirt-001"],"expected_tool":"search_products","expected_arguments":{"category":"服装","max_price":200.0},"expected_answer_contains":["目前都没有库存"],"expected_returned_ids":["shirt-001"]}
+{"request":{"intent":"inventory","product_ids":["missing-product"]},"relevant_ids":[],"expected_tool":"check_inventory","expected_arguments":{"product_id":"missing-product"},"expected_answer_contains":["没有找到商品"]}
+{"request":{"intent":"compare","product_ids":["shoe-001"]},"relevant_ids":[],"expected_tool":"compare_products","expected_arguments":{"product_ids":["shoe-001"]},"expected_answer_contains":["至少提供两个有效商品"]}
+{"request":{"query":"100元以内的运动鞋"},"relevant_ids":[],"expected_tool":"search_products","expected_arguments":{"category":"运动鞋","max_price":100.0},"expected_answer_contains":["没有找到满足条件的商品"]}
+{"request":{"query":"帮我比较这两款","product_ids":["shoe-001","shoe-003"]},"relevant_ids":[],"expected_tool":"compare_products","expected_arguments":{"product_ids":["shoe-001","shoe-003"]},"expected_answer_contains":["云步白色通勤运动鞋","专业竞速碳板跑鞋"]}
+{"request":{"intent":"inventory","product_ids":["shirt-001"]},"relevant_ids":[],"expected_tool":"check_inventory","expected_arguments":{"product_id":"shirt-001"},"expected_answer_contains":["暂时无货"]}
