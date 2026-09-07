@@ -28,7 +28,7 @@ class ShoppingAgent:
             inventory = self.tools.execute(ToolCall(name="check_inventory", arguments={"product_id": product_id}))
             trace.append({"tool": "check_inventory", "arguments": {"product_id": product_id}, "result": inventory})
             status = f"有货，剩余 {inventory['stock']} 件" if inventory["available"] else "暂时无货"
-            return AgentResponse(intent=intent, answer=f"商品 {product_id} {status}。", tool_trace=trace)
+            return AgentResponse(intent=intent, answer=f"商品 [{product_id}] {status}。", tool_trace=trace, citations=[product_id])
         if intent == "compare":
             arguments = {"product_ids": request.product_ids}
             try:
@@ -39,10 +39,10 @@ class ShoppingAgent:
             trace.append({"tool": "compare_products", "arguments": {"product_ids": request.product_ids}, "result_count": len(products)})
             if len(products) < 2:
                 return AgentResponse(intent=intent, answer="请至少提供两个有效商品 ID 进行对比。", tool_trace=trace)
-            lines = [f"{p.title}：¥{p.price:g}，评分 {p.rating:.1f}，库存 {p.stock}" for p in products]
+            lines = [f"{p.title} [{p.id}]：¥{p.price:g}，评分 {p.rating:.1f}，库存 {p.stock}" for p in products]
             best = max(products, key=lambda p: (p.rating, -p.price))
             answer = "；".join(lines) + f"。综合评分与价格，优先考虑 {best.title}。"
-            return AgentResponse(intent=intent, answer=answer, tool_trace=trace)
+            return AgentResponse(intent=intent, answer=answer, tool_trace=trace, citations=[p.id for p in products])
 
         values = request.model_dump(include={"query", "image_path", "max_price", "category", "top_k"})
         values["max_price"] = request.max_price if request.max_price is not None else plan.max_price
@@ -62,5 +62,5 @@ class ShoppingAgent:
             return AgentResponse(intent=intent, answer="检索到了相关商品，但目前都没有库存。", tool_trace=trace, hits=hits)
         top = available[0]
         reason = "、".join(top.reasons) or "评分较高"
-        answer = f"推荐 {top.product.title}（¥{top.product.price:g}，评分 {top.product.rating:.1f}），因为{reason}。"
-        return AgentResponse(intent=intent, answer=answer, tool_trace=trace, hits=available)
+        answer = f"推荐 {top.product.title} [{top.product.id}]（¥{top.product.price:g}，评分 {top.product.rating:.1f}），因为{reason}。"
+        return AgentResponse(intent=intent, answer=answer, tool_trace=trace, hits=available, citations=[top.product.id])

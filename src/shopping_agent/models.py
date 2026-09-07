@@ -59,3 +59,4 @@ class AgentResponse(BaseModel):
     answer: str
     tool_trace: list[dict]
     hits: list[SearchHit] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)

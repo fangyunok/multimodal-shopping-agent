@@ -39,6 +39,7 @@ def test_compare_tool() -> None:
     response = make_agent().run(AgentRequest(intent="compare", product_ids=["shoe-001", "shoe-002"]))
     assert response.tool_trace[0]["tool"] == "compare_products"
     assert "云步白色通勤运动鞋" in response.answer
+    assert response.citations == ["shoe-001", "shoe-002"]
 
 
 def test_compare_with_one_product_is_rejected_without_crashing() -> None:
@@ -85,6 +86,8 @@ def test_offline_evaluation() -> None:
     assert 0 < result.invalid_tool_call_rate < 0.1
     assert result.latency_p50_ms >= 0.0
     assert result.latency_p95_ms >= result.latency_p50_ms
+    assert result.citation_hit_rate == 1.0
+    assert result.grounded_answer_rate == 1.0
 
 
 def test_image_search_baseline(tmp_path: Path) -> None:

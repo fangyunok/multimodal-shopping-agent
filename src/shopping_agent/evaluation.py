@@ -23,6 +23,9 @@ class EvaluationResult:
     invalid_tool_call_rate: float
     latency_p50_ms: float
     latency_p95_ms: float
+    citation_cases: int
+    citation_hit_rate: float
+    grounded_answer_rate: float
 
     def as_dict(self) -> dict[str, int | float]:
         return self.__dict__
@@ -32,6 +35,7 @@ def evaluate(agent: ShoppingAgent, dataset_path: str | Path) -> EvaluationResult
     cases = [json.loads(line) for line in Path(dataset_path).read_text(encoding="utf-8").splitlines() if line.strip()]
     retrieval_hits = retrieval_cases = tool_hits = constraint_hits = parameter_hits = task_hits = tool_call_total = 0
     invalid_tool_calls = 0
+    citation_cases = citation_hits = grounded_hits = 0
     latencies_ms: list[float] = []
     valid_tools = {definition.name for definition in agent.tools.definitions()}
     for case in cases:
@@ -56,6 +60,13 @@ def evaluate(agent: ShoppingAgent, dataset_path: str | Path) -> EvaluationResult
         expected_returned = set(case.get("expected_returned_ids", []))
         returned_ok = not expected_returned or expected_returned.issubset(returned_ids)
         task_hits += answer_ok and returned_ok
+        expected_citations = set(case.get("expected_citations", []))
+        if expected_citations:
+            citation_cases += 1
+            actual_citations = set(response.citations)
+            citation_ok = expected_citations.issubset(actual_citations)
+            citation_hits += citation_ok
+            grounded_hits += citation_ok and actual_citations.issubset(agent.tools.by_id)
         max_price = case["request"].get("max_price")
         constraint_hits += max_price is None or all(hit.product.price <= max_price for hit in response.hits)
     total = max(len(cases), 1)
@@ -72,4 +83,5 @@ def evaluate(agent: ShoppingAgent, dataset_path: str | Path) -> EvaluationResult
         tool_hits / total, constraint_hits / total, parameter_hits / total,
         task_hits / total, tool_call_total / total,
         invalid_tool_calls / max(tool_call_total, 1), percentile(0.50), percentile(0.95),
+        citation_cases, citation_hits / max(citation_cases, 1), grounded_hits / max(citation_cases, 1),
     )
