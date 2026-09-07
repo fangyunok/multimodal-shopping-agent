@@ -11,7 +11,9 @@ from PIL import Image, UnidentifiedImageError
 
 from .agent import ShoppingAgent
 from .fusion_retrieval import ScoreFusionRetriever
+from .llm_planner import LLMPlanner
 from .models import AgentRequest, AgentResponse, SearchHit, SearchRequest
+from .planner import RulePlanner
 from .retrieval import HybridRetriever
 from .semantic_retrieval import SemanticRetriever
 from .tools import ShoppingTools, ToolDefinition
@@ -47,6 +49,22 @@ def get_tools() -> ShoppingTools:
     return ShoppingTools(HybridRetriever.from_jsonl(catalog))
 
 
+@lru_cache
+def get_planner():
+    tools = get_tools()
+    categories = [product.category for product in tools.retriever.products]
+    backend = os.getenv("PLANNER_BACKEND", "rule").lower()
+    if backend == "rule":
+        return RulePlanner(categories)
+    if backend == "llm":
+        endpoint = os.getenv("LLM_BASE_URL")
+        model = os.getenv("LLM_MODEL")
+        if not endpoint or not model:
+            raise ValueError("LLM Planner 需要设置 LLM_BASE_URL 和 LLM_MODEL")
+        return LLMPlanner(categories, endpoint, model, os.getenv("LLM_API_KEY", ""))
+    raise ValueError(f"不支持的 PLANNER_BACKEND: {backend}")
+
+
 app = FastAPI(title="Multimodal Shopping Agent", version="0.1.0")
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -59,7 +77,11 @@ def demo_page() -> FileResponse:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "retriever_backend": os.getenv("RETRIEVER_BACKEND", "baseline").lower()}
+    return {
+        "status": "ok",
+        "retriever_backend": os.getenv("RETRIEVER_BACKEND", "baseline").lower(),
+        "planner_backend": os.getenv("PLANNER_BACKEND", "rule").lower(),
+    }
 
 
 @app.get("/tools", response_model=list[ToolDefinition])
@@ -76,7 +98,7 @@ def search(request: SearchRequest) -> list[SearchHit]:
 def agent(request: AgentRequest) -> AgentResponse:
     if request.image_path:
         raise HTTPException(status_code=400, detail="API 不接受本地图片路径，请使用 /agent/image 上传图片")
-    return ShoppingAgent(get_tools()).run(request)
+    return ShoppingAgent(get_tools(), get_planner()).run(request)
 
 
 @app.post("/agent/image", response_model=AgentResponse)
@@ -110,7 +132,7 @@ async def agent_with_image(
             category=category,
             top_k=top_k,
         )
-        return ShoppingAgent(get_tools()).run(request)
+        return ShoppingAgent(get_tools(), get_planner()).run(request)
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)

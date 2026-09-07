@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from .agent import ShoppingAgent
@@ -11,8 +12,10 @@ from .encoders import ChineseClipEncoder
 from .dataset import prepare_dataset
 from .evaluation import evaluate
 from .fusion_retrieval import ScoreFusionRetriever
+from .llm_planner import LLMPlanner
 from .indexing import build_index
 from .models import AgentRequest
+from .planner import RulePlanner
 from .retrieval import HybridRetriever
 from .retrieval_evaluation import evaluate_retrieval
 from .semantic_retrieval import SemanticRetriever
@@ -35,6 +38,9 @@ def main() -> None:
     parser.add_argument("--retriever-backend", choices=("baseline", "clip", "fusion"), default="baseline")
     parser.add_argument("--lexical-weight", type=float, default=0.65)
     parser.add_argument("--index-dir")
+    parser.add_argument("--planner-backend", choices=("rule", "llm"), default="rule")
+    parser.add_argument("--llm-base-url", default=os.getenv("LLM_BASE_URL"))
+    parser.add_argument("--llm-model", default=os.getenv("LLM_MODEL"))
     parser.add_argument("--prepare-data", metavar="CSV_OR_JSONL")
     parser.add_argument("--output-catalog", default="data/processed/products.jsonl")
     parser.add_argument("--image-dir", default="data/processed/images")
@@ -99,7 +105,15 @@ def main() -> None:
         evaluation_products = [product for product in retriever.products if product.split in (None, "test")]
         print(json.dumps(evaluate_retrieval(retriever, evaluation_products, args.evaluate_retrieval), ensure_ascii=False, indent=2))
         return
-    agent = ShoppingAgent(ShoppingTools(retriever))
+    tools = ShoppingTools(retriever)
+    categories = [product.category for product in retriever.products]
+    if args.planner_backend == "llm":
+        if not args.llm_base_url or not args.llm_model:
+            parser.error("--planner-backend llm 需要 --llm-base-url 和 --llm-model")
+        planner = LLMPlanner(categories, args.llm_base_url, args.llm_model, os.getenv("LLM_API_KEY", ""))
+    else:
+        planner = RulePlanner(categories)
+    agent = ShoppingAgent(tools, planner)
     if args.evaluate:
         print(json.dumps(evaluate(agent, args.evaluate).as_dict(), ensure_ascii=False, indent=2))
         return

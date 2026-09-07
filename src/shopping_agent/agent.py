@@ -3,16 +3,16 @@ from __future__ import annotations
 from pydantic import ValidationError
 
 from .models import AgentRequest, AgentResponse, SearchRequest
-from .planner import RulePlanner
+from .planner import Planner, RulePlanner
 from .tools import ShoppingTools, ToolCall
 
 
 class ShoppingAgent:
     """Deterministic baseline whose trace can be evaluated and later replaced by an LLM planner."""
 
-    def __init__(self, tools: ShoppingTools):
+    def __init__(self, tools: ShoppingTools, planner: Planner | None = None):
         self.tools = tools
-        self.planner = RulePlanner([product.category for product in tools.retriever.products])
+        self.planner = planner or RulePlanner([product.category for product in tools.retriever.products])
 
     def run(self, request: AgentRequest) -> AgentResponse:
         plan = self.planner.plan(request.query, request.intent)

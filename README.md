@@ -4,6 +4,8 @@
 
 求职材料：[简历项目描述](docs/RESUME_PROJECT.md)｜[面试讲解与追问](docs/INTERVIEW_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)
 
+Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible LLM 后端；配置与公平评测方法见 [LLM Planner 文档](docs/LLM_PLANNER.md)。
+
 真实多模态实验可通过 `scripts/run_abo_clip_experiment.ps1` 一次复现；参数和所需 ABO 文件见 [数据集说明](docs/ABO_DATASET.md)。
 
 ## 当前阶段：CPU MVP

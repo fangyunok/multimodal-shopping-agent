@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from typing import Literal, Protocol
+
+from pydantic import BaseModel, Field
 
 
 PRICE_PATTERNS = (
@@ -11,11 +13,15 @@ PRICE_PATTERNS = (
 )
 
 
-@dataclass(frozen=True)
-class Plan:
-    intent: str
-    max_price: float | None
+class Plan(BaseModel):
+    model_config = {"extra": "forbid"}
+    intent: Literal["search", "compare", "inventory"]
+    max_price: float | None = Field(default=None, ge=0)
     category: str | None
+
+
+class Planner(Protocol):
+    def plan(self, query: str, requested_intent: str = "auto") -> Plan: ...
 
 
 class RulePlanner:
