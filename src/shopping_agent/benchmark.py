@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import random
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -43,6 +45,39 @@ def read_benchmark(path: str | Path) -> list[RetrievalCase]:
     return [RetrievalCase.model_validate_json(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def _metrics(group: list[int | None], top_k: int) -> dict[str, float | int]:
+    total = max(len(group), 1)
+    return {
+        "queries": len(group),
+        "recall_at_1": sum(rank == 1 for rank in group) / total,
+        "recall_at_5": sum(rank is not None and rank <= 5 for rank in group) / total,
+        f"recall_at_{top_k}": sum(rank is not None and rank <= top_k for rank in group) / total,
+        "mrr": sum(1 / rank for rank in group if rank is not None) / total,
+        f"ndcg_at_{top_k}": sum(1 / math.log2(rank + 1) for rank in group if rank is not None) / total,
+    }
+
+
+def bootstrap_confidence_intervals(
+    ranks: list[int | None], top_k: int = 10, samples: int = 2000, seed: int = 20260907
+) -> dict[str, list[float]]:
+    """Return deterministic percentile bootstrap 95% confidence intervals."""
+    if not ranks:
+        return {}
+    rng = random.Random(seed)
+    names = ("recall_at_1", "recall_at_5", f"recall_at_{top_k}", "mrr", f"ndcg_at_{top_k}")
+    distributions = {name: [] for name in names}
+    for _ in range(samples):
+        resampled = [ranks[rng.randrange(len(ranks))] for _ in ranks]
+        result = _metrics(resampled, top_k)
+        for name in names:
+            distributions[name].append(float(result[name]))
+    intervals = {}
+    for name, values in distributions.items():
+        values.sort()
+        intervals[name] = [values[int(0.025 * samples)], values[min(int(0.975 * samples), samples - 1)]]
+    return intervals
+
+
 def evaluate_cases(retriever, cases: list[RetrievalCase], top_k: int = 10) -> dict:
     ranks: list[int | None] = []
     by_type: dict[str, list[int | None]] = {}
@@ -52,15 +87,6 @@ def evaluate_cases(retriever, cases: list[RetrievalCase], top_k: int = 10) -> di
         ranks.append(rank)
         by_type.setdefault(case.query_type, []).append(rank)
 
-    def metrics(group: list[int | None]) -> dict[str, float | int]:
-        total = max(len(group), 1)
-        return {
-            "queries": len(group),
-            "recall_at_1": sum(rank == 1 for rank in group) / total,
-            "recall_at_5": sum(rank is not None and rank <= 5 for rank in group) / total,
-            f"recall_at_{top_k}": sum(rank is not None and rank <= top_k for rank in group) / total,
-            "mrr": sum(1 / rank for rank in group if rank is not None) / total,
-        }
-
-    return {"overall": metrics(ranks), "by_query_type": {name: metrics(group) for name, group in sorted(by_type.items())}}
-
+    overall = _metrics(ranks, top_k)
+    overall["confidence_intervals_95"] = bootstrap_confidence_intervals(ranks, top_k)
+    return {"overall": overall, "by_query_type": {name: _metrics(group, top_k) for name, group in sorted(by_type.items())}}

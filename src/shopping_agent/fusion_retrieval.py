@@ -37,4 +37,4 @@ class ScoreFusionRetriever:
             if semantic_hit:
                 reasons.append("CLIP 图文语义相似")
             hits.append(SearchHit(product=product, score=round(score, 4), text_score=round(lexical_score, 4), image_score=round(semantic_score, 4), reasons=reasons))
-        return sorted(hits, key=lambda hit: (hit.score, hit.product.rating), reverse=True)[: request.top_k]
+        return sorted(hits, key=lambda hit: (-hit.score, -hit.product.rating, hit.product.id))[: request.top_k]

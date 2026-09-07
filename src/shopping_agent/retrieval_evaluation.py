@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
 
 from .models import Product, SearchRequest
 
@@ -31,5 +32,5 @@ def evaluate_retrieval(retriever, products: list[Product], mode: str = "text", t
         "recall_at_5": sum(rank is not None and rank <= 5 for rank in ranks) / total,
         f"recall_at_{top_k}": sum(rank is not None and rank <= top_k for rank in ranks) / total,
         "mrr": reciprocal_rank,
+        f"ndcg_at_{top_k}": sum(1 / math.log2(rank + 1) for rank in ranks if rank is not None) / total,
     }
-

@@ -44,3 +44,13 @@ def test_invalid_lexical_weight_is_rejected(tmp_path: Path) -> None:
         assert "lexical_weight" in str(error)
     else:
         raise AssertionError("invalid lexical weight must be rejected")
+
+
+def test_equal_scores_have_deterministic_product_id_tiebreak(tmp_path: Path) -> None:
+    products = [
+        Product(id="b", title="b", category="x", description="", price=1, rating=4),
+        Product(id="a", title="a", category="x", description="", price=1, rating=4),
+    ]
+    backend = FixedRetriever(products, [1.0, 1.0], tmp_path / "products.jsonl")
+    hits = ScoreFusionRetriever(backend, backend).search(SearchRequest(query="same"))
+    assert [hit.product.id for hit in hits] == ["a", "b"]

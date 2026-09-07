@@ -70,7 +70,7 @@ $env:INDEX_DIR="data/index/chinese-clip-base"
 
 ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和署名要求见 `docs/ABO_DATASET.md`。
 
-检索评测统一输出 Recall@1/5/10 与 MRR：
+检索评测统一输出 Recall@1/5/10、MRR、nDCG@K 与固定随机种子的 bootstrap 95% 置信区间：
 
 ```bash
 .venv\\Scripts\\shopping-agent --catalog data/processed/products.jsonl --evaluate-retrieval text
@@ -89,6 +89,12 @@ ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和�
 CLIP 后端可在上述命令后增加 `--retriever-backend clip --index-dir data/index/chinese-clip-base --model <本地模型目录>`。自动生成的查询必须经过人工抽查，最终测试集应补充同义改写、属性组合、类目歧义和不同视角图片。
 
 ## 快速开始
+
+Windows 下可从干净克隆一条命令安装 CPU 依赖、运行测试、生成公开小型 benchmark 并执行 Agent 评测：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_cpu_baseline.ps1
+```
 
 ```bash
 python -m venv .venv

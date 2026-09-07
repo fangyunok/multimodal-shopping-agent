@@ -14,5 +14,5 @@ def test_text_retrieval_metrics(tmp_path: Path) -> None:
     result = evaluate_retrieval(retriever, products, mode="text", top_k=2)
     assert result["queries"] == 2
     assert result["recall_at_1"] == 1.0
+    assert result["ndcg_at_2"] == 1.0
     assert result["mrr"] == 1.0
-

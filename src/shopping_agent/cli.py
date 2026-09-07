@@ -76,6 +76,8 @@ def main() -> None:
         retriever = HybridRetriever.from_jsonl(args.catalog)
     if args.build_benchmark:
         test_products = [product for product in retriever.products if product.split == "test"]
+        if not test_products:
+            test_products = retriever.products
         cases = generate_attribute_cases(test_products)
         write_benchmark(cases, args.build_benchmark)
         print(json.dumps({"cases": len(cases), "output": args.build_benchmark}, ensure_ascii=False, indent=2))
