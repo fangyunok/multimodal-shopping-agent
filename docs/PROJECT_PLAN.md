@@ -13,7 +13,7 @@
 | M2 多模态 RAG | 如何实现语义级图文检索 | Chinese-CLIP、持久化精确向量索引、ABO 子集 | 跨视角 Recall@K、MRR 优于 CPU 基线（已完成 100 商品实验） |
 | M3 Agent | 如何稳定选择工具和参数 | 规则 planner 基线、JSON Schema tool calling | 工具名称、参数与非法调用均可单独评测（基线已完成） |
 | M4 系统评测 | 如何证明有效 | 对照实验、消融、CI、错误分析 | nDCG、置信区间、失败案例和延迟（已完成小规模版本） |
-| M5 展示部署 | 如何让面试官快速体验 | 内置 Web UI、FastAPI、Docker、GitHub Actions | 克隆可运行、界面可演示（已完成 CPU 版本） |
+| M5 展示部署 | 如何让使用者快速体验 | 内置 Web UI、FastAPI、Docker、GitHub Actions | 克隆可运行、界面可演示（已完成 CPU 版本） |
 
 ## 核心评测
 

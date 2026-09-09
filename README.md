@@ -1,8 +1,8 @@
 # 多模态电商购物 Agent
 
-一个面向求职作品集的、可复现的电商智能体项目：图文混合检索（RAG）、商品搜索/库存/对比工具调用，以及端到端离线评测。
+一个可复现的多模态电商智能体项目：涵盖图文混合检索（RAG）、商品搜索/库存/对比工具调用，以及端到端离线评测。
 
-求职材料：[简历项目描述](docs/RESUME_PROJECT.md)｜[面试讲解与追问](docs/INTERVIEW_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)
+项目文档：[技术摘要](docs/PROJECT_SUMMARY.md)｜[设计决策与验证指南](docs/TECHNICAL_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)
 
 Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible LLM 后端；配置与公平评测方法见 [LLM Planner 文档](docs/LLM_PLANNER.md)，GPU 复现实验见 [AutoDL 指南](docs/AUTODL_PLANNER.md)。
 
