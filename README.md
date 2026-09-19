@@ -1,6 +1,38 @@
 # 多模态电商购物 Agent
 
-一个可复现的多模态电商智能体项目：涵盖图文混合检索（RAG）、商品搜索/库存/对比工具调用，以及端到端离线评测。
+[![CI](https://github.com/fangyunok/multimodal-shopping-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/fangyunok/multimodal-shopping-agent/actions/workflows/ci.yml)
+
+一个可复现的多模态电商智能体：把**图文检索、受Schema约束的工具调用、可溯源回答和分层离线评测**连接成完整链路。项目不只展示成功案例，也保留稠密检索退化、Planner非法输出等负结果。
+
+## 先看结论
+
+| 子系统 | 对照结果 | 结论与边界 |
+|---|---|---|
+| 跨视角图像检索 | Chinese-CLIP图文索引 Recall@1 `0.1667 → 0.7500` | 100商品、12条test查询；95% CI `[0.50, 1.00]`，不可外推到完整商品分布 |
+| 属性文本检索 | CLIP没有全面超过词法基线 | 品牌、型号等精确token仍需词法信号，因此保留融合检索 |
+| Planner | Qwen2.5-3B联合准确率 `0.36 → 0.51` | 同一100条锁定集；同时产生10%无效规划，预算提取仍是短板 |
+| 工具与回答 | Schema Dispatcher + 商品ID引用 | 模型不能直接编造价格和库存；非法参数可拒绝、事实来源可检查 |
+| 工程交付 | FastAPI、Web Demo、Docker、CI、一键CPU基线 | 无GPU也能验证API、工具和评测链路 |
+
+详细口径、失败案例和复现配置见[实验记录](docs/EXPERIMENT_LOG.md)与[项目摘要](docs/PROJECT_SUMMARY.md)。
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    A[文本/图片请求] --> B[Planner]
+    B --> C[Schema Dispatcher]
+    C --> D[商品搜索]
+    C --> E[库存检查]
+    C --> F[商品对比]
+    D --> G[词法 + Chinese-CLIP 检索]
+    G --> H[带商品ID引用的回答]
+    E --> H
+    F --> H
+    B -. 规则基线 / Qwen2.5-3B .-> B
+```
+
+这个仓库聚焦**多模态检索与Agent工具编排**；模型后训练和纯推荐排序不是这里的实验变量。
 
 项目文档：[技术摘要](docs/PROJECT_SUMMARY.md)｜[设计决策与验证指南](docs/TECHNICAL_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)
 
@@ -11,6 +43,16 @@ Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible
 ```powershell
 .venv\Scripts\shopping-agent --catalog data/products.jsonl --evaluate-planner data/planner_test.jsonl
 ```
+
+## 5分钟验证
+
+Windows下从干净克隆运行CPU闭环（安装依赖、测试、生成小型benchmark并执行Agent评测）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_cpu_baseline.ps1
+```
+
+这条路径不下载Chinese-CLIP，也不调用外部LLM；它用于验证工程链路，不冒充真实多模态模型成绩。
 
 真实多模态实验可通过 `scripts/run_abo_clip_experiment.ps1` 一次复现；参数和所需 ABO 文件见 [数据集说明](docs/ABO_DATASET.md)。
 
