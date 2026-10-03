@@ -1,18 +1,21 @@
-# 多模态电商购物 Agent
+# 多模态内容理解与工具编排 Agent
 
 [![CI](https://github.com/fangyunok/multimodal-shopping-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/fangyunok/multimodal-shopping-agent/actions/workflows/ci.yml)
 
-一个可复现的多模态电商智能体：把**图文检索、受Schema约束的工具调用、可溯源回答和分层离线评测**连接成完整链路。项目不只展示成功案例，也保留稠密检索退化、Planner非法输出等负结果。
+**面向图文内容的可复现多模态 Agent：内容理解 → 检索 → 工具编排 → 可溯源生成。**
+
+把**多模态内容理解（Chinese-CLIP 共享向量空间）、受 JSON Schema 约束的工具编排、可溯源生成与分层离线评测**连成完整链路；检索、规划、工具、回答四层解耦，可独立替换与评测。项目不只展示成功案例，也保留稠密检索退化、Planner 非法输出等负结果。
 
 ## 先看结论
 
 | 子系统 | 对照结果 | 结论与边界 |
 |---|---|---|
-| 跨视角图像检索 | Chinese-CLIP图文索引 Recall@1 `0.1667 → 0.7500` | 100商品、12条test查询；95% CI `[0.50, 1.00]`，不可外推到完整商品分布 |
-| 属性文本检索 | CLIP没有全面超过词法基线 | 品牌、型号等精确token仍需词法信号，因此保留融合检索 |
-| Planner | Qwen2.5-3B联合准确率 `0.36 → 0.51` | 同一100条锁定集；同时产生10%无效规划，预算提取仍是短板 |
-| 工具与回答 | Schema Dispatcher + 商品ID引用 | 模型不能直接编造价格和库存；非法参数可拒绝、事实来源可检查 |
-| 工程交付 | FastAPI、Web Demo、Docker、CI、一键CPU基线 | 无GPU也能验证API、工具和评测链路 |
+| 多模态内容理解与检索（图文共享向量空间） | Chinese-CLIP 图文索引 Recall@1 `0.1667 → 0.7500` | 100 商品、12 条跨视角 test 查询；95% CI `[0.50, 1.00]`，不可外推到完整商品分布 |
+| 属性文本检索与融合 | CLIP 没有全面超过词法基线 | 品牌、型号等精确 token 仍需词法信号，因此保留融合检索 |
+| Prompt 与规划编排 | Qwen2.5-3B 联合准确率 `0.36 → 0.51`、类目准确率 `0.49 → 0.87` | 同一 100 条锁定集；同时产生 10% 无效规划，预算提取仍是短板 |
+| 工具编排与可溯源生成 | Schema Dispatcher + 内容 ID 引用 | 模型不能直接编造价格和库存；非法参数可拒绝、引用忠实度可度量 |
+| 在线性能 | 规则 Agent 端到端 P50 `0.07 ms` / P95 `0.41 ms`；LLM Planner P50 `188 ms` / P95 `236 ms` | 计时在商品目录与索引预加载后统计，不含进程启动与模型加载 |
+| 后端与工程交付 | FastAPI、Web Demo、Docker、CI、一键 CPU 基线 | 无 GPU 也能验证 API、工具与评测链路 |
 
 详细口径、失败案例和复现配置见[实验记录](docs/EXPERIMENT_LOG.md)与[项目摘要](docs/PROJECT_SUMMARY.md)。
 
@@ -32,7 +35,7 @@ flowchart LR
     B -. 规则基线 / Qwen2.5-3B .-> B
 ```
 
-这个仓库聚焦**多模态检索与Agent工具编排**；模型后训练和纯推荐排序不是这里的实验变量。
+这个仓库聚焦**多模态内容理解与检索、Prompt 规划、Agent 工具编排**；模型后训练和纯推荐排序不是这里的实验变量。
 
 项目文档：[技术摘要](docs/PROJECT_SUMMARY.md)｜[设计决策与验证指南](docs/TECHNICAL_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)
 
@@ -56,7 +59,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_cpu_baseline.ps1
 
 真实多模态实验可通过 `scripts/run_abo_clip_experiment.ps1` 一次复现；参数和所需 ABO 文件见 [数据集说明](docs/ABO_DATASET.md)。
 
-## 当前阶段：CPU MVP
+## CPU 基线：不依赖 GPU 也能跑通闭环
 
 本阶段不依赖显卡或外部 API，确保任何人克隆仓库后都能复现：
 
@@ -126,6 +129,29 @@ $env:INDEX_DIR="data/index/chinese-clip-base"
 
 加入 `--include-other-images` 可同时下载 `other_image_id` 指向的其他视角；随后使用 `--build-cross-view-benchmark D:/datasets/abo` 可生成查询图不同于索引主图的无泄漏图片 benchmark。ABO 不含可靠价格和实时库存，只用于图文检索；数据详情和署名要求见 `docs/ABO_DATASET.md`。
 
+### 复现 Recall@1 `0.1667 → 0.7500`
+
+表中的多模态检索结果由 `scripts/run_abo_clip_experiment.ps1` 一次复现，脚本会依次下载主图/其他视角、转换并稳定划分数据（100 商品、70/18/12）、生成属性与跨视角 benchmark、构建文本-only / 图片-only / 图文索引，并运行词法、RGB、CLIP 与融合对照：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_abo_clip_experiment.ps1 `
+  -AboRoot D:/datasets/abo `
+  -ModelPath D:/models/chinese-clip-vit-base-patch16 `
+  -Limit 100
+```
+
+脚本对每个外部命令显式检查退出码，中间任一步失败都会终止。跑完后应观察到下列口径（跨视角 benchmark，12 条查询；原始输出见 [`docs/EXPERIMENT_LOG.md`](docs/EXPERIMENT_LOG.md)）：
+
+| 方法 | Recall@1 | Recall@5 | Recall@10 | MRR | nDCG@10 |
+|---|---|---|---|---|---|
+| RGB 直方图 CPU 基线 | 0.1667 | 0.1667 | 0.2500 | 0.1786 | 0.1944 |
+| Chinese-CLIP 图片-only 索引 | 0.6667 | 0.6667 | 0.7500 | 0.6806 | 0.6964 |
+| Chinese-CLIP 商品图文等权索引 | 0.7500 | 0.7500 | 0.7500 | 0.7500 | 0.7500 |
+
+> **口径说明**：`0.7500` 基于 12 条跨视角 test 查询，bootstrap 95% CI 为 `[0.50, 1.00]`，样本量小，不作为无偏的最终成绩，也不能外推到完整电商分布。图片-only 低于图文索引，说明商品文本在共享向量空间提供了互补语义。
+
+原始归档与本地模型权重体积较大（ABO listings ≈ 83 MB、images-small ≈ 3 GB），未提交到仓库；请按 [数据集说明](docs/ABO_DATASET.md) 自行准备，再运行上述命令复现全部指标。
+
 检索评测统一输出 Recall@1/5/10、MRR、nDCG@K 与固定随机种子的 bootstrap 95% 置信区间：
 
 ```bash
@@ -186,29 +212,45 @@ curl http://127.0.0.1:8010/health
 
 访问 `http://127.0.0.1:8010/docs`。镜像内置健康检查，GitHub Actions会在每次提交后同时执行Python测试和Docker构建。
 
+## 能力边界与可迁移性
+
+- **与任务无关、可直接复用**：共享向量检索层（双塔图文编码 + 词法/向量分数融合）、Schema Dispatcher 工具协议层、分层评测框架（Recall@K / MRR / nDCG / 任务成功率 / 参数准确率 / 非法调用率 / 引用忠实度 / P50–P95 延迟）。
+- **与本任务绑定**：商品目录与字段 schema、搜索 / 库存 / 比价三类工具、跨视角图片 benchmark。
+- **迁移到新的内容场景时**，只需替换后两者，检索层、工具协议层与评测协议可直接沿用。
+
 ## 工程结构
 
 ```text
 data/                         示例商品与评测集
 src/shopping_agent/
   retrieval.py               CPU 图文混合检索
-  tools.py                   可调用购物工具
+  semantic_retrieval.py      Chinese-CLIP 共享向量检索
+  fusion_retrieval.py        词法 + 向量分数融合
+  tools.py                   可调用工具（搜索 / 库存 / 对比）
   agent.py                   可解释的决策与工具编排
+  planner.py / llm_planner.py  规则规划基线 / LLM 规划后端
   evaluation.py              离线评测
   app.py                     FastAPI 服务
 tests/                        单元与接口测试
 ```
 
-## 路线图
+## 后续迭代方向
 
-- [x] M0：仓库、数据契约、测试与 API 骨架
-- [x] M1：CPU 图文检索基线、工具调用与评测闭环
-- [x] M2：Chinese-CLIP、持久化索引、ABO 数据管线与无泄漏跨视角评测
-- [x] M3 基线：规则 Planner、JSON Schema Dispatcher、搜索/库存/对比工具及错误轨迹
-- [x] M4 基线：RAG 引用忠实度、工具参数、任务成功率、延迟、置信区间与消融实验
-- [x] M5 CPU 版：内置 Web 演示、FastAPI、Docker、CI 和一键复现脚本
-- [x] LLM Planner 工程版：Schema 约束、20 条开发集、100 条锁定测试集和成本统计
-- [ ] 扩展：真实 LLM 对照、更大分层数据集、VLM Planner 与细粒度 hard-negative 重排
+**已完成**
+
+- M0：仓库、数据契约、测试与 API 骨架
+- M1：CPU 图文检索基线、工具调用与评测闭环
+- M2：Chinese-CLIP、持久化索引、ABO 数据管线与无泄漏跨视角评测
+- M3 基线：规则 Planner、JSON Schema Dispatcher、搜索/库存/对比工具及错误轨迹
+- M4 基线：RAG 引用忠实度、工具参数、任务成功率、延迟、置信区间与消融实验
+- M5 CPU 版：内置 Web 演示、FastAPI、Docker、CI 和一键复现脚本
+- LLM Planner 工程版：Schema 约束、20 条开发集、100 条锁定测试集和成本统计
+
+**进行中**
+
+- 真实 LLM 对照实验与更大规模分层数据集
+- VLM Planner 与细粒度 hard-negative 重排
+- Agent 端到端 P50/P95 延迟基准的自动化产出
 
 ## GPU 规划
 
@@ -220,3 +262,7 @@ M0-M1 只使用本机 CPU。M2 的向量离线编码可先租单卡 RTX 4090（2
 - 示例数据为自建小数据，仅用于测试；
 - 后续真实数据会记录来源、许可证、版本和清洗脚本；
 - 所有模型结论必须与规则/轻量基线对照，并记录随机种子和配置。
+
+## License
+
+MIT，详见 [LICENSE](LICENSE)。

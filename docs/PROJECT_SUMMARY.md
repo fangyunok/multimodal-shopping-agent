@@ -2,7 +2,7 @@
 
 ## 项目名称
 
-多模态电商购物 Agent｜Chinese-CLIP、图文 RAG、Tool Calling、离线评测
+多模态内容理解与工具编排 Agent｜Chinese-CLIP 图文检索、Prompt 编排、Tool Calling、离线评测
 
 ## 核心实现
 

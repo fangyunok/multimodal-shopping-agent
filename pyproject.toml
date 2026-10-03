@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "multimodal-shopping-agent"
 version = "0.1.0"
-description = "CPU-first multimodal RAG shopping agent with tool calling and evaluation"
+description = "Reproducible multimodal content-understanding agent: shared-space image-text retrieval, schema-constrained tool orchestration and grounded generation"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
