@@ -16,6 +16,7 @@
 | 工具编排与可溯源生成 | Schema Dispatcher + 内容 ID 引用 | 模型不能直接编造价格和库存；非法参数可拒绝、引用忠实度可度量 |
 | 在线性能 | 规则 Agent 端到端 P50 `0.07 ms` / P95 `0.41 ms`；LLM Planner P50 `188 ms` / P95 `236 ms` | 计时在商品目录与索引预加载后统计，不含进程启动与模型加载 |
 | MCP 协议链路 | tools / resources / prompts 三类能力完整暴露，支持 stdio、SSE 与 streamable-http | stdio 吞吐约 `360 req/s` 饱和且不随并发增长，瓶颈在串行管线而非检索；口径见 [MCP 文档](docs/MCP_SERVER.md) |
+| 多轮会话与循环控制 | 会话槽位跨轮继承；上下文预算为硬边界；ReAct 轨迹逐步可审计 | 追问「有货吗」直接复用上一轮候选，工具调用 3 次 → 1 次；40 轮会话在 512–4096 tokens 四档预算下峰值均未越界；口径见[运行期文档](docs/AGENT_RUNTIME.md) |
 | 后端与工程交付 | FastAPI、Web Demo、MCP Server、Docker、CI、一键 CPU 基线 | 无 GPU 也能验证 API、工具、MCP 协议与评测链路 |
 
 详细口径、失败案例和复现配置见[实验记录](docs/EXPERIMENT_LOG.md)与[项目摘要](docs/PROJECT_SUMMARY.md)。
@@ -38,7 +39,7 @@ flowchart LR
 
 这个仓库聚焦**多模态内容理解与检索、Prompt 规划、Agent 工具编排**；模型后训练和纯推荐排序不是这里的实验变量。
 
-项目文档：[技术摘要](docs/PROJECT_SUMMARY.md)｜[设计决策与验证指南](docs/TECHNICAL_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)｜[MCP 接口与容量实测](docs/MCP_SERVER.md)
+项目文档：[技术摘要](docs/PROJECT_SUMMARY.md)｜[设计决策与验证指南](docs/TECHNICAL_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)｜[MCP 接口与容量实测](docs/MCP_SERVER.md)｜[会话记忆与 ReAct 循环](docs/AGENT_RUNTIME.md)
 
 Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible LLM 后端；配置与公平评测方法见 [LLM Planner 文档](docs/LLM_PLANNER.md)，GPU 复现实验见 [AutoDL 指南](docs/AUTODL_PLANNER.md)。
 
@@ -224,11 +225,13 @@ curl http://127.0.0.1:8010/health
 
 | 能力类别 | 内容 |
 |---|---|
-| Tools | `search_products`、`compare_products`、`check_inventory`、`ask_shopping_agent`、`get_runtime_metrics` |
+| Tools | `search_products`、`compare_products`、`check_inventory`、`ask_shopping_agent`、`react_query`（多轮会话）、`get_session_state`、`get_runtime_metrics` |
 | Resources | `catalog://products`、`catalog://schema`、`catalog://products/{product_id}` |
 | Prompts | `grounded_recommendation`（强制引用商品 ID）、`tool_orchestration_plan` |
 
 传输支持 stdio、SSE 与 streamable-http。工程层内建并发闸门、超时、指数退避重试、只读工具幂等重放与逐工具 P50/P95/P99 指标；失败统一转为结构化错误（`invalid_arguments` / `permission_denied` / `not_found` / `timeout` / `tool_failure`），不把异常直接抛给模型。本地图片路径默认拒绝，需显式开启。
+
+有状态的 `react_query` 会**绕开幂等重放**：重复调用本就应该改变会话状态，命中 30 秒重放缓存只会返回陈旧快照并跳过状态更新。
 
 实测结论（每档 best-of-N；Windows、Python 3.11.9、5 条商品目录）：
 
@@ -246,6 +249,49 @@ curl http://127.0.0.1:8010/health
 ```
 
 接入配置、错误分类表、设计取舍与已知限制见 [MCP Server 文档](docs/MCP_SERVER.md)。
+
+## 多轮会话与 ReAct 循环
+
+单轮 Agent 每次请求都从零开始；真实导购是多轮的——用户会追问「那有货吗」、追加预算、改类目。
+这一层由三个解耦模块支撑，全部不依赖外部模型，可在 CPU 干净环境复现。
+
+**会话记忆**（`session.py`）。跨轮累积五类槽位，规则只有两条：**新值覆盖旧值，未提及的继承**。
+其中 `last_candidates`（上一次检索返回的候选）收益最直接——用户问「那有货吗」时不再重新检索，
+而是直接用记住的候选查库存，**工具调用从 3 次降到 1 次**，也不会因重新检索漂移到别的商品。
+
+**上下文预算**（`session.py`）。`window()` 在 token 预算内把事件流压成 messages，四阶段：
+折叠最旧轮次为摘要 → 收缩摘要 → 逐条丢弃 → 截断超额的最近一条。
+槽位摘要始终注入上下文头部，因此**压缩不会丢掉已确认的约束**。压缩是就地且持久的，
+重复调用不会重复累积摘要，这正是 ReAct 每步重算窗口却不越压越大的前提。
+
+实测（`scripts/benchmark_agent_runtime.py`，40 轮连续会话，不含模型推理开销）：
+
+| 预算 (tokens) | 可用 (tokens) | 轮数 | 最终占用 | 峰值占用 | 首次压缩轮次 | 是否越界 |
+|---|---|---|---|---|---|---|
+| 512 | 256 | 40 | 192 | 244 | 4 | 否 |
+| 1024 | 768 | 40 | 681 | 766 | 3 | 否 |
+| 2048 | 1792 | 40 | 1689 | 1790 | 12 | 否 |
+| 4096 | 3840 | 40 | 3749 | 3832 | 20 | 否 |
+
+四档预算下峰值均未越界。补阶段四的原因正是一次实测：单条检索观察就可能大于剩余额度，
+只丢轮次会让预算被突破几 token——**预算的意义在于它是硬边界**。
+
+**ReAct 循环**（`react.py`）。每一步记下 `thought / action / arguments / observation / error / latency_ms`，
+最终答案必须能回溯到具体工具返回。三处工程重点：
+
+- **观察回注**：工具失败不中断循环，而是分类为 `invalid_arguments` / `not_found` / `unknown_tool` / `tool_failure` 参与下一步决策；一个工具抛异常不该让会话崩掉。
+- **失控防护**：只有五种终止原因——`final_answer`、`max_steps`、`loop_detected`（同一 `(tool, arguments)` 被重复请求）、`budget_exhausted`、`no_candidates`。`max_steps` 防步数过多，`loop_detected` 防原地打转。
+- **预算感知**：每步后重算窗口，压缩后仍超预算即提前收口。上下文管理是循环里的退出条件，不是事后的日志清理。
+
+实测 15 次运行：平均工具调用 3.0 次、单轮最多 4 次，端到端 P50 `2.02 ms` / P95 `3.14 ms`。
+
+```bash
+.venv\\Scripts\\python -m shopping_agent.cli --catalog data/products.jsonl --chat
+```
+
+**边界**：`RuleReasoner` 是确定性基线，不含真实 LLM 决策器（其步数与延迟是该接口的上界参考）；
+会话在内存中，进程重启即丢失，多实例部署需要外部存储；高并发下的会话行为未做压测。
+设计取舍与完整口径见 [运行期文档](docs/AGENT_RUNTIME.md)。
 
 ## 能力边界与可迁移性
 
@@ -265,9 +311,12 @@ src/shopping_agent/
   agent.py                   可解释的决策与工具编排
   planner.py / llm_planner.py  规则规划基线 / LLM 规划后端
   mcp_server.py              MCP 协议适配层：tools / resources / prompts + 韧性层与指标
+  session.py                 会话记忆、跨轮槽位累积与上下文预算
+  react.py                   ReAct 循环：多步轨迹、观察回注、循环检测与预算感知
   evaluation.py              离线评测
   app.py                     FastAPI 服务
 scripts/benchmark_mcp.py      MCP 并发压测（进程内回环 / stdio 子进程两种口径）
+scripts/benchmark_agent_runtime.py  会话上下文预算与 ReAct 步数 / 延迟实测
 tests/                        单元与接口测试
 ```
 
@@ -283,13 +332,15 @@ tests/                        单元与接口测试
 - M5 CPU 版：内置 Web 演示、FastAPI、Docker、CI 和一键复现脚本
 - LLM Planner 工程版：Schema 约束、20 条开发集、100 条锁定测试集和成本统计
 - M6 MCP Server：tools / resources / prompts 三类能力、stdio 与 SSE / streamable-http 三种传输、超时重试幂等与并发闸门、逐工具延迟指标、双口径压测脚本
+- M7 多轮运行期：跨轮会话记忆与槽位继承、token 预算下的上下文压缩（四阶段、硬边界）、ReAct 多步循环（观察回注 / 循环检测 / 预算感知）、MCP `react_query` 会话化与重放冲突处理
 
 **进行中**
 
 - 真实 LLM 对照实验与更大规模分层数据集
 - VLM Planner 与细粒度 hard-negative 重排
 - Agent 端到端 P50/P95 延迟基准的自动化产出
-- MCP：streamable-http 并发容量实测，以及多轮会话记忆与 ReAct 循环
+- 接入真实 LLM 决策器（实现 `Reasoner.decide()`），并用 LLM 步数分布校准当前基线
+- MCP：streamable-http 并发容量实测；会话状态外部化（Redis）以支持多实例部署
 
 ## 算力规划
 

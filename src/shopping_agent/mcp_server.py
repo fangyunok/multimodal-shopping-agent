@@ -29,7 +29,9 @@ from pydantic import BaseModel, Field, ValidationError
 from .agent import ShoppingAgent
 from .models import AgentRequest, Product, SearchRequest
 from .planner import RulePlanner
+from .react import ReActAgent
 from .retrieval import HybridRetriever
+from .session import ContextBudget, SessionMemory
 from .tools import ShoppingTools, ToolCall
 
 try:  # pragma: no cover - 依赖缺失时的提示路径
@@ -61,6 +63,11 @@ class ServerConfig(BaseModel):
     backoff_base_seconds: float = Field(default=DEFAULT_BACKOFF_BASE_SECONDS, ge=0)
     max_concurrency: int = Field(default=DEFAULT_MAX_CONCURRENCY, ge=1)
     idempotency_ttl_seconds: float = Field(default=DEFAULT_IDEMPOTENCY_TTL_SECONDS, ge=0)
+    react_max_steps: int = Field(default=6, ge=1, description="单轮 ReAct 最大步数")
+    session_context_budget: int = Field(
+        default=2048, ge=512, description="每个会话的上下文 token 预算（需大于预留的回复额度）"
+    )
+    max_sessions: int = Field(default=128, ge=1, description="服务端保留的会话上限（超出按插入顺序淘汰）")
 
 
 def percentile(samples: list[float], quantile: float) -> float | None:
@@ -178,12 +185,25 @@ class ToolRuntime:
         with self._lock:
             self._replay_cache[key] = (time.monotonic(), value)
 
-    async def run(self, tool: str, arguments: dict[str, Any], handler: Callable[[], Any]) -> Any:
+    async def run(
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        handler: Callable[[], Any],
+        *,
+        idempotent: bool = True,
+    ) -> Any:
+        """执行工具。
+
+        ``idempotent=False`` 用于**有状态**工具（会话式 ReAct）：重复调用会改变会话状态，
+        按参数缓存并重放会返回陈旧快照并跳过状态更新，因此这类工具必须绕开重放缓存。
+        """
         key = self.idempotency_key(tool, arguments)
-        replayed = self._replay(key)
-        if replayed is not None:
-            self.metrics.record(tool, 0.0, replayed=True)
-            return replayed
+        if idempotent:
+            replayed = self._replay(key)
+            if replayed is not None:
+                self.metrics.record(tool, 0.0, replayed=True)
+                return replayed
 
         started = time.perf_counter()
         attempts = 0
@@ -204,7 +224,8 @@ class ToolRuntime:
                     await asyncio.sleep(delay + random.uniform(0, self.config.backoff_base_seconds))
                     continue
                 self.metrics.record(tool, (time.perf_counter() - started) * 1000, retries=attempts)
-                self._remember(key, result)
+                if idempotent:
+                    self._remember(key, result)
                 return result
 
 
@@ -226,6 +247,19 @@ def _search_hit_payload(hit: Any) -> dict[str, Any]:
         "image_score": hit.image_score,
         "reasons": list(hit.reasons),
     }
+
+
+def _jsonable(value: Any) -> Any:
+    """把工具返回值转成可 JSON 序列化的结构，保留嵌套模型的字段。"""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    return str(value)
 
 
 def load_tools(
@@ -271,23 +305,48 @@ def build_server(
         os.getenv("MCP_ALLOW_LOCAL_IMAGE_PATH", "0") == "1" if allow_local_image_path is None else allow_local_image_path
     )
 
+    sessions: dict[str, SessionMemory] = {}
+    sessions_lock = threading.Lock()
+
+    def resolve_session(session_id: str) -> SessionMemory:
+        """按 session_id 复用会话；超出上限时按插入顺序淘汰最早的会话。"""
+        with sessions_lock:
+            session = sessions.get(session_id)
+            if session is None:
+                if len(sessions) >= config.max_sessions:
+                    sessions.pop(next(iter(sessions)), None)
+                session = SessionMemory(
+                    session_id=session_id,
+                    budget=ContextBudget(max_tokens=config.session_context_budget),
+                )
+                sessions[session_id] = session
+            return session
+
     server = MCPServer(
         name=config.name,
         version=config.version,
         instructions=(
             "商品图文检索与工具编排 Agent。检索、比价、库存三个工具均为只读；"
-            "端到端追问请使用 ask_shopping_agent，它会返回可审计的工具调用轨迹。"
+            "单轮端到端追问使用 ask_shopping_agent；"
+            "需要多轮上下文（追问库存、追加预算、对比上一轮候选）时使用带 session_id 的 "
+            "react_query，它会累积会话状态并返回可审计的多步轨迹。"
         ),
     )
 
-    async def guarded(tool: str, arguments: dict[str, Any], handler: Callable[[], Any]) -> str:
+    async def guarded(
+        tool: str,
+        arguments: dict[str, Any],
+        handler: Callable[[], Any],
+        *,
+        idempotent: bool = True,
+    ) -> str:
         """统一出口：成功返回业务载荷，失败返回结构化错误，不把异常直接抛给模型。
 
         失败被分类为 invalid_arguments / permission_denied / not_found / timeout / tool_failure，
         便于客户端按类型决定重试还是终止。
         """
         try:
-            return _dumps(await runtime.run(tool, arguments, handler))
+            return _dumps(await runtime.run(tool, arguments, handler, idempotent=idempotent))
         except ValidationError as error:
             return _dumps(
                 {
@@ -418,6 +477,75 @@ def build_server(
         return await guarded("ask_shopping_agent", arguments, handler)
 
     @server.tool(
+        name="react_query",
+        description=(
+            "多轮会话式 ReAct 执行：同一 session_id 下累积预算、类目与候选商品，"
+            "返回可审计的多步轨迹（thought / action / observation）与上下文预算统计。"
+            "有状态，因此不参与幂等重放。"
+        ),
+    )
+    async def react_query(query: str, session_id: str = "default", intent: str = "auto") -> str:
+        arguments = {"query": query, "session_id": session_id, "intent": intent}
+
+        def handler() -> dict[str, Any]:
+            session = resolve_session(session_id)
+            react_agent = ReActAgent(
+                tools,
+                max_steps=config.react_max_steps,
+                budget=session.budget,
+                session=session,
+            )
+            result = react_agent.run(query, intent)
+            return {
+                "ok": True,
+                "session_id": session_id,
+                "intent": result.intent,
+                "answer": result.answer,
+                "citations": list(result.citations),
+                "stop_reason": result.stop_reason,
+                "tool_calls": result.tool_calls,
+                "context": result.context,
+                "steps": [
+                    {
+                        "step": step.index,
+                        "thought": step.thought,
+                        "action": step.action,
+                        "arguments": step.arguments,
+                        "error": step.error,
+                        "latency_ms": step.latency_ms,
+                        "observation": _jsonable(step.observation),
+                    }
+                    for step in result.steps
+                ],
+            }
+
+        return await guarded("react_query", arguments, handler, idempotent=False)
+
+    @server.tool(
+        name="get_session_state",
+        description="读取指定会话已累积的槽位（预算 / 类目 / 候选 / 排除项）与当前上下文预算占用。",
+    )
+    async def get_session_state(session_id: str = "default") -> str:
+        arguments = {"session_id": session_id}
+        with sessions_lock:
+            session = sessions.get(session_id)
+            active = len(sessions)
+            if session is None:
+                return _dumps(
+                    {"ok": True, "session_id": session_id, "exists": False, "active_sessions": active}
+                )
+            payload = {
+                "ok": True,
+                "session_id": session_id,
+                "exists": True,
+                "state": session.state.model_dump(),
+                "context": session.window().stats(),
+                "turns": len(session.turns),
+                "active_sessions": active,
+            }
+        return _dumps(payload)
+
+    @server.tool(
         name="get_runtime_metrics",
         description="返回本服务的运行时指标：逐工具调用量、错误、重试、幂等命中与 P50/P95/P99 延迟。",
     )
@@ -430,9 +558,13 @@ def build_server(
                     "max_retries": config.max_retries,
                     "max_concurrency": config.max_concurrency,
                     "idempotency_ttl_seconds": config.idempotency_ttl_seconds,
+                    "react_max_steps": config.react_max_steps,
+                    "session_context_budget": config.session_context_budget,
+                    "max_sessions": config.max_sessions,
                     "allow_local_image_path": allow_image,
                 },
                 "metrics": runtime.metrics.snapshot(),
+                "active_sessions": len(sessions),
             }
         )
 
@@ -496,7 +628,7 @@ def build_server(
             "请输出编排计划，包含：\n"
             "1) 需要调用的工具及顺序；2) 每个工具的入参来源；3) 失败时的回退路径；"
             "4) 终止条件与最大步数。可用工具：search_products、compare_products、"
-            "check_inventory、ask_shopping_agent。"
+            "check_inventory、ask_shopping_agent、react_query。"
         )
 
     server.runtime = runtime  # type: ignore[attr-defined]  # 便于测试与压测读取指标
@@ -519,6 +651,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-retries", type=int, default=int(os.getenv("MCP_MAX_RETRIES", "1")))
     parser.add_argument("--max-concurrency", type=int, default=int(os.getenv("MCP_MAX_CONCURRENCY", str(DEFAULT_MAX_CONCURRENCY))))
     parser.add_argument("--idempotency-ttl", type=float, default=float(os.getenv("MCP_IDEMPOTENCY_TTL", str(DEFAULT_IDEMPOTENCY_TTL_SECONDS))))
+    parser.add_argument("--react-max-steps", type=int, default=int(os.getenv("MCP_REACT_MAX_STEPS", "6")))
+    parser.add_argument("--session-context-budget", type=int, default=int(os.getenv("MCP_SESSION_CONTEXT_BUDGET", "2048")))
+    parser.add_argument("--max-sessions", type=int, default=int(os.getenv("MCP_MAX_SESSIONS", "128")))
     parser.add_argument("--allow-local-image-path", action="store_true", default=os.getenv("MCP_ALLOW_LOCAL_IMAGE_PATH", "0") == "1")
     parser.add_argument("--log-level", default=os.getenv("MCP_LOG_LEVEL", "INFO"))
     return parser
@@ -552,6 +687,9 @@ def main() -> None:
         max_retries=args.max_retries,
         max_concurrency=args.max_concurrency,
         idempotency_ttl_seconds=args.idempotency_ttl,
+        react_max_steps=args.react_max_steps,
+        session_context_budget=args.session_context_budget,
+        max_sessions=args.max_sessions,
     )
     server = build_server(tools, planner, config, allow_local_image_path=args.allow_local_image_path)
 

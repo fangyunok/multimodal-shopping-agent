@@ -25,6 +25,8 @@ EXPECTED_TOOLS = {
     "compare_products",
     "check_inventory",
     "ask_shopping_agent",
+    "react_query",
+    "get_session_state",
     "get_runtime_metrics",
 }
 
@@ -216,3 +218,69 @@ def test_percentile_uses_nearest_rank() -> None:
     assert percentile(samples, 50) == 50.0
     assert percentile(samples, 95) == 95.0
     assert percentile(samples, 99) == 99.0
+
+
+def test_react_query_returns_multi_step_trace_and_context_stats(tmp_path) -> None:
+    payload = call(make_server(tmp_path), "react_query", {"query": "运动鞋", "session_id": "s1"})
+    assert payload["ok"] is True
+    assert payload["session_id"] == "s1"
+    actions = [step["action"] for step in payload["steps"]]
+    assert actions[0] == "search_products"
+    assert actions.count("check_inventory") == 2
+    assert payload["stop_reason"] == "final_answer"
+    assert payload["tool_calls"] == 3
+    assert payload["citations"]
+    assert payload["context"]["tokens"] <= payload["context"]["max_tokens"]
+
+
+def test_session_state_accumulates_across_react_calls(tmp_path) -> None:
+    server = make_server(tmp_path)
+    call(server, "react_query", {"query": "300元以内的运动鞋", "session_id": "s2"})
+    state = call(server, "get_session_state", {"session_id": "s2"})
+    assert state["exists"] is True
+    assert state["state"]["max_price"] == 300
+    assert state["state"]["category"] == "运动鞋"
+    assert state["state"]["turn_count"] == 1
+    assert state["state"]["last_candidates"]
+    assert state["active_sessions"] == 1
+
+
+def test_session_follow_up_reuses_remembered_candidates(tmp_path) -> None:
+    server = make_server(tmp_path)
+    first = call(server, "react_query", {"query": "运动鞋", "session_id": "s3"})
+    second = call(server, "react_query", {"query": "那有货吗", "session_id": "s3"})
+    # 追问直接命中会话记住的候选，不再重新检索
+    assert second["intent"] == "inventory"
+    assert [step["action"] for step in second["steps"]] == ["check_inventory", None]
+    assert second["tool_calls"] == 1
+    assert first["citations"][0] in second["answer"]
+
+
+def test_sessions_are_isolated_by_id(tmp_path) -> None:
+    server = make_server(tmp_path)
+    call(server, "react_query", {"query": "300元以内的运动鞋", "session_id": "a"})
+    other = call(server, "get_session_state", {"session_id": "b"})
+    assert other["exists"] is False
+    assert other["active_sessions"] == 1
+
+
+def test_stateful_react_query_bypasses_the_idempotency_cache(tmp_path) -> None:
+    server = make_server(tmp_path)
+    call(server, "react_query", {"query": "运动鞋", "session_id": "cache"})
+    call(server, "react_query", {"query": "运动鞋", "session_id": "cache"})
+    metrics = call(server, "get_runtime_metrics", {})["metrics"]["tools"]["react_query"]
+    # 参数完全相同，但会话状态已经改变：不能走幂等重放返回陈旧快照
+    assert metrics["calls"] == 2
+    assert metrics["replayed"] == 0
+
+
+def test_session_eviction_is_bounded_by_max_sessions(tmp_path) -> None:
+    server = make_server(tmp_path, max_sessions=2)
+    call(server, "react_query", {"query": "运动鞋", "session_id": "one"})
+    call(server, "react_query", {"query": "运动鞋", "session_id": "two"})
+    call(server, "react_query", {"query": "运动鞋", "session_id": "three"})
+    payload = call(server, "get_runtime_metrics", {})
+    assert payload["active_sessions"] == 2
+    assert payload["config"]["max_sessions"] == 2
+    assert call(server, "get_session_state", {"session_id": "one"})["exists"] is False
+    assert call(server, "get_session_state", {"session_id": "three"})["exists"] is True

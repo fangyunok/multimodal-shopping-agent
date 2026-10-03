@@ -17,10 +17,36 @@ from .indexing import build_index
 from .models import AgentRequest
 from .planner import RulePlanner
 from .planner_evaluation import evaluate_planner
+from .react import ReActAgent
 from .retrieval import HybridRetriever
 from .retrieval_evaluation import evaluate_retrieval
 from .semantic_retrieval import SemanticRetriever
+from .session import ContextBudget, SessionMemory
 from .tools import ShoppingTools
+
+
+def run_chat(agent: ReActAgent) -> None:
+    """多轮会话模式：一条 session 贯穿全程，每轮重算上下文预算。"""
+    print("多轮会话模式（会话记忆 + 上下文预算 + ReAct）。输入 exit 退出。")
+    while True:
+        try:
+            line = input("你> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if line.lower() in {"exit", "quit", ":q"}:
+            break
+        if not line:
+            continue
+        result = agent.run(line)
+        print(f"助手> {result.answer}")
+        stats = result.context
+        print(
+            f"  [意图 {result.intent}｜工具调用 {result.tool_calls} 次｜终止 {result.stop_reason}"
+            f"｜上下文 {stats['tokens']}/{stats['max_tokens']} tokens"
+            f"｜丢弃 {stats['dropped_turns']} 条]"
+        )
+    print("会话结束。")
 
 
 def main() -> None:
@@ -57,6 +83,9 @@ def main() -> None:
     parser.add_argument("--evaluate-retrieval", choices=("text", "image"))
     parser.add_argument("--build-benchmark", metavar="OUTPUT_JSONL")
     parser.add_argument("--benchmark", metavar="BENCHMARK_JSONL")
+    parser.add_argument("--chat", action="store_true", help="进入多轮会话模式（会话记忆 + 上下文预算 + ReAct）")
+    parser.add_argument("--max-steps", type=int, default=6, help="ReAct 单轮最大步数")
+    parser.add_argument("--context-budget", type=int, default=2048, help="会话上下文 token 预算上限")
     args = parser.parse_args()
     if args.build_cross_view_benchmark:
         summary = build_cross_view_benchmark(args.build_cross_view_benchmark, args.catalog, args.cross_view_output)
@@ -117,6 +146,10 @@ def main() -> None:
         planner = RulePlanner(categories)
     if args.evaluate_planner:
         print(json.dumps(evaluate_planner(planner, args.evaluate_planner), ensure_ascii=False, indent=2))
+        return
+    if args.chat:
+        budget = ContextBudget(max_tokens=args.context_budget)
+        run_chat(ReActAgent(tools, max_steps=args.max_steps, budget=budget, session=SessionMemory(budget=budget)))
         return
     agent = ShoppingAgent(tools, planner)
     if args.evaluate:
