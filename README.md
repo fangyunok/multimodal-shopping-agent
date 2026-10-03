@@ -15,7 +15,8 @@
 | Prompt 与规划编排 | Qwen2.5-3B 联合准确率 `0.36 → 0.51`、类目准确率 `0.49 → 0.87` | 同一 100 条锁定集；同时产生 10% 无效规划，预算提取仍是短板 |
 | 工具编排与可溯源生成 | Schema Dispatcher + 内容 ID 引用 | 模型不能直接编造价格和库存；非法参数可拒绝、引用忠实度可度量 |
 | 在线性能 | 规则 Agent 端到端 P50 `0.07 ms` / P95 `0.41 ms`；LLM Planner P50 `188 ms` / P95 `236 ms` | 计时在商品目录与索引预加载后统计，不含进程启动与模型加载 |
-| 后端与工程交付 | FastAPI、Web Demo、Docker、CI、一键 CPU 基线 | 无 GPU 也能验证 API、工具与评测链路 |
+| MCP 协议链路 | tools / resources / prompts 三类能力完整暴露，支持 stdio、SSE 与 streamable-http | stdio 吞吐约 `360 req/s` 饱和且不随并发增长，瓶颈在串行管线而非检索；口径见 [MCP 文档](docs/MCP_SERVER.md) |
+| 后端与工程交付 | FastAPI、Web Demo、MCP Server、Docker、CI、一键 CPU 基线 | 无 GPU 也能验证 API、工具、MCP 协议与评测链路 |
 
 详细口径、失败案例和复现配置见[实验记录](docs/EXPERIMENT_LOG.md)与[项目摘要](docs/PROJECT_SUMMARY.md)。
 
@@ -37,7 +38,7 @@ flowchart LR
 
 这个仓库聚焦**多模态内容理解与检索、Prompt 规划、Agent 工具编排**；模型后训练和纯推荐排序不是这里的实验变量。
 
-项目文档：[技术摘要](docs/PROJECT_SUMMARY.md)｜[设计决策与验证指南](docs/TECHNICAL_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)
+项目文档：[技术摘要](docs/PROJECT_SUMMARY.md)｜[设计决策与验证指南](docs/TECHNICAL_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)｜[MCP 接口与容量实测](docs/MCP_SERVER.md)
 
 Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible LLM 后端；配置与公平评测方法见 [LLM Planner 文档](docs/LLM_PLANNER.md)，GPU 复现实验见 [AutoDL 指南](docs/AUTODL_PLANNER.md)。
 
@@ -76,6 +77,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_cpu_baseline.ps1
 - 商品事实回答的结构化引用、引用命中率和 grounded answer rate；
 - FastAPI 服务和自动化测试。
 - JPEG、PNG、WebP 图片上传接口（5 MB 限制与内容校验）。
+- 标准 MCP 接口（tools / resources / prompts）与 stdio、SSE、streamable-http 三种传输。
 
 轻量图片特征只是 CPU 冒烟基线，不把颜色相似误称为语义理解。项目也已接入中文 CLIP，实现共享向量空间中的以文搜图、以图搜图和图文联合检索；两种后端使用同一套 Recall@K/MRR 协议比较。
 
@@ -212,11 +214,44 @@ curl http://127.0.0.1:8010/health
 
 访问 `http://127.0.0.1:8010/docs`。镜像内置健康检查，GitHub Actions会在每次提交后同时执行Python测试和Docker构建。
 
+## MCP Server
+
+同一套检索、比价、库存与端到端追问能力，按 Model Context Protocol 暴露，供 Claude Desktop、Cursor 等任意 MCP 客户端直接接入。业务逻辑没有改动，只把已有的工具协议层（`ToolDefinition`）换了一个标准传输暴露出去。
+
+```bash
+.venv\\Scripts\\python -m shopping_agent.mcp_server --transport stdio --catalog data/products.jsonl
+```
+
+| 能力类别 | 内容 |
+|---|---|
+| Tools | `search_products`、`compare_products`、`check_inventory`、`ask_shopping_agent`、`get_runtime_metrics` |
+| Resources | `catalog://products`、`catalog://schema`、`catalog://products/{product_id}` |
+| Prompts | `grounded_recommendation`（强制引用商品 ID）、`tool_orchestration_plan` |
+
+传输支持 stdio、SSE 与 streamable-http。工程层内建并发闸门、超时、指数退避重试、只读工具幂等重放与逐工具 P50/P95/P99 指标；失败统一转为结构化错误（`invalid_arguments` / `permission_denied` / `not_found` / `timeout` / `tool_failure`），不把异常直接抛给模型。本地图片路径默认拒绝，需显式开启。
+
+实测结论（每档 best-of-N；Windows、Python 3.11.9、5 条商品目录）：
+
+| 传输 | 并发 1 吞吐 | 并发 8 吞吐 | 并发 1 P50 | 并发 8 P50 |
+|---|---|---|---|---|
+| 进程内回环 | 1121.4 req/s | 1207.1 req/s | 0.76 ms | 3.67 ms |
+| stdio 子进程 | 246.5 req/s | 365.2 req/s | 3.89 ms | 21.84 ms |
+
+**两种传输的吞吐都不随并发增长**（分别在约 1.2k 与约 365 req/s 饱和），P50 随并发近似线性上升 —— 瓶颈在单条串行的请求/响应管线，不在检索逻辑；5 条商品的目录下业务耗时可忽略。因此高扇出场景应改用 streamable-http，把并发落到独立连接而不是在 stdio 单管道里排队。原始结果见 [`results/`](results/)。
+
+复现压测与完整口径：
+
+```bash
+.venv\\Scripts\\python scripts/benchmark_mcp.py --transport stdio --concurrency 1,2,4,8
+```
+
+接入配置、错误分类表、设计取舍与已知限制见 [MCP Server 文档](docs/MCP_SERVER.md)。
+
 ## 能力边界与可迁移性
 
-- **与任务无关、可直接复用**：共享向量检索层（双塔图文编码 + 词法/向量分数融合）、Schema Dispatcher 工具协议层、分层评测框架（Recall@K / MRR / nDCG / 任务成功率 / 参数准确率 / 非法调用率 / 引用忠实度 / P50–P95 延迟）。
+- **与任务无关、可直接复用**：共享向量检索层（双塔图文编码 + 词法/向量分数融合）、Schema Dispatcher 工具协议层、MCP 协议适配层（tools / resources / prompts 映射 + 超时重试幂等并发闸门）、分层评测框架（Recall@K / MRR / nDCG / 任务成功率 / 参数准确率 / 非法调用率 / 引用忠实度 / P50–P95 延迟）。
 - **与本任务绑定**：商品目录与字段 schema、搜索 / 库存 / 比价三类工具、跨视角图片 benchmark。
-- **迁移到新的内容场景时**，只需替换后两者，检索层、工具协议层与评测协议可直接沿用。
+- **迁移到新的内容场景时**，只需替换后两者，检索层、工具协议层、MCP 适配层与评测协议可直接沿用。
 
 ## 工程结构
 
@@ -229,8 +264,10 @@ src/shopping_agent/
   tools.py                   可调用工具（搜索 / 库存 / 对比）
   agent.py                   可解释的决策与工具编排
   planner.py / llm_planner.py  规则规划基线 / LLM 规划后端
+  mcp_server.py              MCP 协议适配层：tools / resources / prompts + 韧性层与指标
   evaluation.py              离线评测
   app.py                     FastAPI 服务
+scripts/benchmark_mcp.py      MCP 并发压测（进程内回环 / stdio 子进程两种口径）
 tests/                        单元与接口测试
 ```
 
@@ -245,12 +282,14 @@ tests/                        单元与接口测试
 - M4 基线：RAG 引用忠实度、工具参数、任务成功率、延迟、置信区间与消融实验
 - M5 CPU 版：内置 Web 演示、FastAPI、Docker、CI 和一键复现脚本
 - LLM Planner 工程版：Schema 约束、20 条开发集、100 条锁定测试集和成本统计
+- M6 MCP Server：tools / resources / prompts 三类能力、stdio 与 SSE / streamable-http 三种传输、超时重试幂等与并发闸门、逐工具延迟指标、双口径压测脚本
 
 **进行中**
 
 - 真实 LLM 对照实验与更大规模分层数据集
 - VLM Planner 与细粒度 hard-negative 重排
 - Agent 端到端 P50/P95 延迟基准的自动化产出
+- MCP：streamable-http 并发容量实测，以及多轮会话记忆与 ReAct 循环
 
 ## 算力规划
 

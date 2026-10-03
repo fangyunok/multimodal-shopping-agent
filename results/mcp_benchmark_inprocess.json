@@ -1,0 +1,169 @@
+{
+  "tool": "search_products",
+  "transport": "inprocess",
+  "catalog": "data/products.jsonl",
+  "catalog_size": 5,
+  "python": "3.11.9",
+  "repeat": 5,
+  "config": {
+    "name": "multimodal-shopping-agent",
+    "version": "0.1.0",
+    "timeout_seconds": 2.0,
+    "max_retries": 1,
+    "backoff_base_seconds": 0.02,
+    "max_concurrency": 8,
+    "idempotency_ttl_seconds": 30.0
+  },
+  "distinct_arguments": [
+    {
+      "concurrency": 1,
+      "requests": 200,
+      "errors": 0,
+      "wall_seconds": 0.1784,
+      "throughput_rps": 1121.4,
+      "latency_ms": {
+        "p50": 0.758,
+        "p95": 1.261,
+        "p99": 1.713,
+        "mean": 0.85,
+        "max": 2.136
+      },
+      "runs": 5
+    },
+    {
+      "concurrency": 2,
+      "requests": 200,
+      "errors": 0,
+      "wall_seconds": 0.174,
+      "throughput_rps": 1149.2,
+      "latency_ms": {
+        "p50": 1.297,
+        "p95": 1.937,
+        "p99": 2.403,
+        "mean": 1.283,
+        "max": 2.684
+      },
+      "runs": 5
+    },
+    {
+      "concurrency": 4,
+      "requests": 200,
+      "errors": 0,
+      "wall_seconds": 0.1719,
+      "throughput_rps": 1163.7,
+      "latency_ms": {
+        "p50": 2.035,
+        "p95": 3.501,
+        "p99": 4.172,
+        "mean": 2.139,
+        "max": 4.589
+      },
+      "runs": 5
+    },
+    {
+      "concurrency": 8,
+      "requests": 200,
+      "errors": 0,
+      "wall_seconds": 0.1657,
+      "throughput_rps": 1207.1,
+      "latency_ms": {
+        "p50": 3.667,
+        "p95": 5.714,
+        "p99": 6.277,
+        "mean": 3.718,
+        "max": 6.777
+      },
+      "runs": 5
+    }
+  ],
+  "repeated_arguments": [
+    {
+      "concurrency": 1,
+      "requests": 200,
+      "errors": 0,
+      "wall_seconds": 0.1864,
+      "throughput_rps": 1073.0,
+      "latency_ms": {
+        "p50": 0.78,
+        "p95": 1.339,
+        "p99": 1.721,
+        "mean": 0.89,
+        "max": 1.91
+      },
+      "runs": 5
+    },
+    {
+      "concurrency": 2,
+      "requests": 200,
+      "errors": 0,
+      "wall_seconds": 0.1731,
+      "throughput_rps": 1155.7,
+      "latency_ms": {
+        "p50": 1.287,
+        "p95": 1.949,
+        "p99": 2.276,
+        "mean": 1.267,
+        "max": 2.774
+      },
+      "runs": 5
+    },
+    {
+      "concurrency": 4,
+      "requests": 200,
+      "errors": 0,
+      "wall_seconds": 0.1701,
+      "throughput_rps": 1175.8,
+      "latency_ms": {
+        "p50": 2.051,
+        "p95": 3.255,
+        "p99": 3.777,
+        "mean": 2.106,
+        "max": 4.552
+      },
+      "runs": 5
+    },
+    {
+      "concurrency": 8,
+      "requests": 200,
+      "errors": 0,
+      "wall_seconds": 0.1708,
+      "throughput_rps": 1171.1,
+      "latency_ms": {
+        "p50": 3.699,
+        "p95": 5.749,
+        "p99": 7.438,
+        "mean": 3.768,
+        "max": 8.279
+      },
+      "runs": 5
+    }
+  ],
+  "server_metrics": {
+    "ok": true,
+    "config": {
+      "timeout_seconds": 2.0,
+      "max_retries": 1,
+      "max_concurrency": 8,
+      "idempotency_ttl_seconds": 30.0,
+      "allow_local_image_path": false
+    },
+    "metrics": {
+      "uptime_seconds": 8.829,
+      "total_calls": 8800,
+      "tools": {
+        "search_products": {
+          "calls": 8800,
+          "errors": 0,
+          "retries": 0,
+          "replayed": 8596,
+          "latency_ms": {
+            "p50": 0.749,
+            "p95": 1.133,
+            "p99": 1.36,
+            "max": 3.545
+          }
+        }
+      }
+    }
+  }
+}
