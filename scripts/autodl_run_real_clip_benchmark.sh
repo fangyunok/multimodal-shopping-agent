@@ -10,8 +10,8 @@
 #     bash scripts/autodl_run_real_clip_benchmark.sh
 #
 # 常用覆盖（环境变量）：
-#     ABO_LIMIT=100000   取多少条商品（决定下载图片量，10 万条约 3~6 GB）
-#     SCALES=10000,100000 压测规模档位
+#     ABO_LIMIT=95000    取多少条商品（决定下载图片量；ABO 全库实测 92,320 条 listing，封顶即全量）
+#     SCALES=10000,90000 压测规模档位（最大档 ≤ 编码条数 − 查询数）
 #     ABO_ROOT=/root/autodl-tmp/abo  把数据放到数据盘，避免系统盘写满
 #     KEEP_ABO=1         保留 ABO 原始数据（默认跑完删图片省盘）
 #
@@ -22,9 +22,16 @@ set -euo pipefail
 
 WORKDIR="${WORKDIR:-$PWD}"
 ABO_ROOT="${ABO_ROOT:-$WORKDIR/data/abo}"
-ABO_LIMIT="${ABO_LIMIT:-100000}"
-SCALES="${SCALES:-10000,100000}"
+# ABO 全库实测共 10 个 listings 分片、92,320 条商品，10 万档物理上不存在。
+# 缺图的少量商品（本机全量跑为 380 条）会在转换时跳过，因此最大档留了余量。
+SCALES="${SCALES:-10000,90000}"
 QUERIES="${QUERIES:-200}"
+# 压测脚本的切分规则是「语料取向量文件前缀 [0:count]、查询取紧接其后的 queries 条」，
+# 因此导出的向量条数必须 ≥ 最大规模 + 查询数，否则第 6 步会被校验直接拦下。
+# （试跑时踩过：导出 10000 条却要 10000 语料 + 200 查询。）这里按 SCALES/QUERIES 自动推导，
+# 想手工覆盖仍可显式设 ABO_LIMIT。
+MAX_SCALE="$(printf '%s' "$SCALES" | tr ',' '\n' | grep -E '^[0-9]+$' | sort -n | tail -1)"
+ABO_LIMIT="${ABO_LIMIT:-$((MAX_SCALE + QUERIES))}"
 TOP_K="${TOP_K:-10}"
 IMAGE_WEIGHT="${IMAGE_WEIGHT:-0.5}"
 DEVICE="${DEVICE:-cuda}"
