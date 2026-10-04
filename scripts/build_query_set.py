@@ -177,13 +177,25 @@ def parse_queries(data: dict, expected: int) -> dict[int, str]:
 
 
 def generate_batch(model: str, products: list, persona: dict, retries: int = 5) -> list[str]:
-    """一批商品的查询生成。LLM 偶发漏 index 或静默错位——都进入 pending 单独补一轮。"""
+    """一批商品的查询生成。LLM 偶发漏 index、静默错位、或整批输出坍缩——前两轮整批重试，
+    仍失败的商品改逐条生成（单条 prompt 没有串行空间，几乎不会失败）。"""
     queries: dict[int, str] = {}
     pending = list(range(len(products)))
     last_error: Exception | None = None
-    for _ in range(retries + 1):
+    for round_no in range(retries + 1):
         if not pending:
             break
+        if round_no >= 2:  # 整批两轮仍卡 → 逐条兜底
+            for full in list(pending):
+                try:
+                    got = parse_queries(call_ollama(model, build_prompt([products[full]], persona)), 1)
+                except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
+                    last_error = error
+                    continue
+                if 0 in got:  # 单条无错位可言，直接采用
+                    queries[full] = got[0]
+                    pending.remove(full)
+            continue
         subset = [products[i] for i in pending]
         prompt = build_prompt(subset, persona)
         # 整批锚点并集：只有命中其他商品锚点的查询才算串位证据
