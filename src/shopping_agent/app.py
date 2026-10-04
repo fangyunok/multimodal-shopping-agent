@@ -4,35 +4,72 @@ import os
 import tempfile
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, Field
 
 from .agent import ShoppingAgent
 from .fusion_retrieval import ScoreFusionRetriever
 from .llm_planner import LLMPlanner
 from .models import AgentRequest, AgentResponse, SearchHit, SearchRequest
 from .planner import RulePlanner
+from .react import ReActAgent
 from .retrieval import HybridRetriever
 from .semantic_retrieval import SemanticRetriever
+from .session import ContextBudget
+from .session_store import SessionConflict, SessionHandle
 from .tools import ShoppingTools, ToolDefinition
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+def build_encoder():
+    """按配置构建编码器：远端 HTTP 编码服务，或本进程内的本地模型。
+
+    设了 ``ENCODER_BASE_URL`` 就走远端（``scripts/serve_encoder.py``）。
+    这样检索副本完全不带 torch：CPU 侧可以廉价地起十几个副本，
+    编码集中在一台 GPU 机器上按批次吃满算力——这是阶段三的拆分点。
+    两条路径实现的是同一个 ``MultimodalEncoder`` 协议，检索层无感。
+    """
+    base_url = os.getenv("ENCODER_BASE_URL")
+    if base_url:
+        from .encoder_service import RemoteEncoder
+
+        return RemoteEncoder(base_url)
+    from .encoders import ChineseClipEncoder
+
+    model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
+    return ChineseClipEncoder(os.getenv("CLIP_MODEL_PATH", model_name), os.getenv("MODEL_DEVICE", "cpu"))
+
+
 @lru_cache
 def get_tools() -> ShoppingTools:
     catalog = Path(os.getenv("CATALOG_PATH", ROOT / "data" / "products.jsonl"))
     backend = os.getenv("RETRIEVER_BACKEND", "baseline").lower()
-    if backend in {"clip", "fusion"}:
-        from .encoders import ChineseClipEncoder
+    if backend == "ann":
+        from .ann_index import AnnIndexConfig
+        from .faiss_retrieval import FaissRetriever
 
+        index_dir = os.getenv("INDEX_DIR")
+        if not index_dir:
+            raise ValueError("RETRIEVER_BACKEND=ann 需要设置 INDEX_DIR")
         model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
-        model_path = os.getenv("CLIP_MODEL_PATH", model_name)
-        device = os.getenv("MODEL_DEVICE", "cpu")
-        encoder = ChineseClipEncoder(model_path, device)
+        encoder = build_encoder()
+        # 运行期只覆盖 efSearch / nprobe 这类旋钮；索引类型与维度以清单为准。
+        config = AnnIndexConfig(
+            kind=os.getenv("ANN_KIND", "hnsw"),  # type: ignore[arg-type]
+            dimension=int(os.getenv("ANN_DIMENSION", "512")),
+            ef_search=int(os.getenv("ANN_EF_SEARCH", "64")),
+            nprobe=int(os.getenv("ANN_NPROBE", "32")),
+        )
+        return ShoppingTools(FaissRetriever.from_index(catalog, index_dir, encoder, model_name, config))
+    if backend in {"clip", "fusion"}:
+        model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
+        encoder = build_encoder()
         index_dir = os.getenv("INDEX_DIR")
         retriever = (
             SemanticRetriever.from_index(catalog, index_dir, encoder, model_name)
@@ -47,6 +84,18 @@ def get_tools() -> ShoppingTools:
     if backend != "baseline":
         raise ValueError(f"不支持的 RETRIEVER_BACKEND: {backend}")
     return ShoppingTools(HybridRetriever.from_jsonl(catalog))
+
+
+@lru_cache
+def get_session_store():
+    """会话存储。默认进程内实现，设 SESSION_BACKEND=redis 后变成多副本共享。
+
+    注意这里也必须 `lru_cache`：每次请求新建一个 Redis 连接池会在高并发下把
+    文件描述符耗光，而连接池本来就是为复用而存在的。
+    """
+    from .session_store import create_session_store
+
+    return create_session_store()
 
 
 @lru_cache
@@ -84,6 +133,61 @@ def health() -> dict[str, str]:
     }
 
 
+@app.get("/healthz")
+def liveness() -> dict[str, str]:
+    """存活探针：进程还在就返回 200。
+
+    刻意不检查检索器与存储——它们挂了应该由就绪探针拦住流量，
+    而不是让编排系统把进程杀掉重启（重启并不能修好一个挂掉的 Redis）。
+    """
+    return {"status": "alive"}
+
+
+@app.get("/readyz")
+def readiness() -> dict[str, object]:
+    """就绪探针：确认检索器已加载、索引版本可读、会话存储可达。
+
+    多副本部署时这三件事任何一件不成立，这个副本都不该接流量。
+    """
+    checks: dict[str, object] = {}
+    healthy = True
+    try:
+        tools = get_tools()
+        retriever = tools.retriever
+        checks["retriever"] = {"products": len(retriever.products), "ok": True}
+        # 带 vectors.npy 的索引才有精确兜底能力，这是极端过滤下的正确性保障。
+        describe = getattr(retriever, "describe", None)
+        if callable(describe):
+            checks["index"] = describe()
+    except Exception as error:  # noqa: BLE001 - 就绪探针必须把异常转成状态而不是抛穿
+        healthy = False
+        checks["retriever"] = {"ok": False, "error": f"{type(error).__name__}: {error}"}
+    try:
+        store = get_session_store()
+        reachable = store.ping()
+        healthy = healthy and reachable
+        checks["session_store"] = {
+            "backend": type(store).__name__,
+            "reachable": reachable,
+            "ttl_seconds": int(os.getenv("SESSION_TTL_SECONDS", "3600")),
+        }
+    except Exception as error:  # noqa: BLE001
+        healthy = False
+        checks["session_store"] = {"reachable": False, "error": f"{type(error).__name__}: {error}"}
+    return {"status": "ready" if healthy else "degraded", "checks": checks}
+
+
+@app.get("/index")
+def index_status() -> dict[str, object]:
+    """索引版本状态：当前服务的是哪一个版本、有哪些版本可回滚。"""
+    root = os.getenv("INDEX_ROOT")
+    if not root:
+        return {"versions": None, "note": "未设置 INDEX_ROOT，当前未使用版本化索引"}
+    from .incremental import IndexVersionManager
+
+    return IndexVersionManager(root).status()
+
+
 @app.get("/tools", response_model=list[ToolDefinition])
 def tool_definitions() -> list[ToolDefinition]:
     return get_tools().definitions()
@@ -99,6 +203,55 @@ def agent(request: AgentRequest) -> AgentResponse:
     if request.image_path:
         raise HTTPException(status_code=400, detail="API 不接受本地图片路径，请使用 /agent/image 上传图片")
     return ShoppingAgent(get_tools(), get_planner()).run(request)
+
+
+class ChatRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    session_id: str = Field(min_length=1, max_length=128, description="调用方自带的会话标识")
+    query: str = Field(min_length=1, description="本轮用户输入")
+    intent: Literal["auto", "search", "compare", "inventory"] = "auto"
+
+
+class ChatResponse(BaseModel):
+    session_id: str
+    answer: str
+    intent: str
+    tool_calls: int
+    stop_reason: str
+    context: dict
+    conflicts: int = Field(description="会话写入版本冲突次数；持续大于 0 说明调用方的 session_id 路由有问题")
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(request: ChatRequest) -> ChatResponse:
+    """多轮会话接口：会话状态存在外部存储里，因此本进程**无状态**。
+
+    这是阶段二的关键接口。同一个 session_id 的连续请求可以落到任意副本上，
+    状态由 SessionStore 保证一致；写入用版本化 CAS，冲突会体现在 conflicts 字段里
+    而不是静默覆盖。
+    """
+    budget = ContextBudget(max_tokens=int(os.getenv("CONTEXT_BUDGET", "2048")))
+    handle = SessionHandle(get_session_store(), request.session_id, budget)
+    try:
+        with handle as memory:
+            agent = ReActAgent(
+                get_tools(),
+                max_steps=int(os.getenv("MAX_STEPS", "6")),
+                budget=budget,
+                session=memory,
+            )
+            result = agent.run(request.query, request.intent)
+    except SessionConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return ChatResponse(
+        session_id=request.session_id,
+        answer=result.answer,
+        intent=result.intent,
+        tool_calls=result.tool_calls,
+        stop_reason=result.stop_reason,
+        context=result.context,
+        conflicts=handle.conflicts,
+    )
 
 
 @app.post("/agent/image", response_model=AgentResponse)

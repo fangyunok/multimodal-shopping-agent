@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -134,6 +135,26 @@ class Turn(BaseModel):
         return estimate_tokens(self.content)
 
 
+class SessionSnapshot(BaseModel):
+    """会话的可持久化快照。
+
+    会话状态必须能被序列化，服务层才能做到无状态：进程重启、多副本负载均衡、
+    滚动发布都会把内存里的 dict 清掉，而用户感觉不到——前提是状态存在外部存储里。
+
+    ``version`` 是乐观并发控制用的版本号，不是业务字段：多副本并发写同一会话时，
+    靠它做 compare-and-set，避免"后到的请求覆盖掉别人刚写入的槽位"。
+    """
+
+    session_id: str
+    state: SessionState = Field(default_factory=SessionState)
+    turns: list[Turn] = Field(default_factory=list)
+    summaries: list[str] = Field(default_factory=list)
+    version: int = 0
+    updated_at: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+
 class ContextBudget(BaseModel):
     """上下文预算。``reserve_tokens`` 预留给模型回复，不参与历史占用。"""
 
@@ -200,6 +221,39 @@ class SessionMemory:
         self.state = SessionState()
         self.turns: list[Turn] = []
         self._summaries: list[str] = []
+        # 版本号由外部存储维护（见 session_store 的 CAS 写入）；单进程使用时恒为 0。
+        self.version: int = 0
+
+    # ---------- 快照 ----------
+
+    def to_snapshot(self) -> SessionSnapshot:
+        """导出可持久化快照。压缩状态一并带走，否则恢复后上下文会重新膨胀。"""
+        return SessionSnapshot(
+            session_id=self.session_id,
+            state=self.state.model_copy(deep=True),
+            turns=[turn.model_copy(deep=True) for turn in self.turns],
+            summaries=list(self._summaries),
+            version=self.version,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    def load_snapshot(self, snapshot: SessionSnapshot) -> "SessionMemory":
+        """从快照恢复。就地覆盖，因此可以复用一个已构造好的实例来省掉重建开销。"""
+        self.session_id = snapshot.session_id
+        self.state = snapshot.state.model_copy(deep=True)
+        self.turns = [turn.model_copy(deep=True) for turn in snapshot.turns]
+        self._summaries = list(snapshot.summaries)
+        self.version = snapshot.version
+        return self
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: SessionSnapshot,
+        budget: ContextBudget | None = None,
+        system_prompt: str = "你是商品导购助手，价格与库存只能来自工具返回结果。",
+    ) -> "SessionMemory":
+        return cls(session_id=snapshot.session_id, budget=budget, system_prompt=system_prompt).load_snapshot(snapshot)
 
     # ---------- 写入 ----------
 

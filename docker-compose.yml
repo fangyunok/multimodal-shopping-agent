@@ -6,5 +6,29 @@ services:
     environment:
       RETRIEVER_BACKEND: baseline
       CATALOG_PATH: /app/data/products.jsonl
+      # 阶段二：会话状态外置。设成 redis 之后本服务就是无状态的，
+      # 副本可以随意增减、滚动发布不会丢会话。
+      SESSION_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      SESSION_TTL_SECONDS: "3600"
+      CONTEXT_BUDGET: "2048"
+      MAX_STEPS: "6"
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
+  # 水平扩容时再起一个副本，验证"无状态服务 + 共享会话"确实成立：
+  #   docker compose up --scale shopping-agent=3
+  # 之后用同一个 session_id 连续请求 8010 端口，会话不会碎。
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # 会话是"丢了就丢一轮对话"的短生命周期数据，不需要持久化；
+    # 真要持久化就把 --appendonly 打开并挂 volume。
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
