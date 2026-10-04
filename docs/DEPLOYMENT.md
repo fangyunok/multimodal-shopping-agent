@@ -91,17 +91,26 @@ curl -s -X POST localhost:8010/chat -H 'Content-Type: application/json' \
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `RETRIEVER_BACKEND` | `baseline` | `baseline` / `clip` / `fusion` / `ann` |
+| `RETRIEVER_BACKEND` | `baseline` | `baseline` / `clip` / `fusion` / `ann` / `partitioned` |
 | `CATALOG_PATH` | `data/products.jsonl` | 商品目录 |
-| `INDEX_DIR` | — | ANN 索引目录；`ann` 后端必填 |
+| `INDEX_DIR` | — | 索引目录；`ann` 与 `partitioned` 后端必填 |
 | `ANN_KIND` | `hnsw` | 运行期只用来定位**索引类型**；维度与类型以清单为准 |
 | `ANN_EF_SEARCH` | `64` | HNSW 查询宽度。**改了立刻生效，不需要重建索引** |
 | `ANN_NPROBE` | `32` | IVF 扫描桶数。同上，可热调 |
+| `ANN_RERANK_CANDIDATES` | `0` | 粗召回 + 精确重排的候选数，`0` 表示关闭。开启后分数改为用 `vectors.npy` 重算，因此**索引必须保留向量** |
 | `PLANNER_BACKEND` | `rule` | `rule` / `llm` |
 | `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | — | `llm` 规划器必填 |
 
 > 召回率不够时的第一反应应该是**调大 `ANN_EF_SEARCH` / `ANN_NPROBE`**，而不是重建索引。
 > 这两个值都被 faiss 序列化进索引文件，加载后可以任意覆盖。
+
+> 注意这里刻意**读不到** HNSW 的 `m` / `efConstruction`、IVF 的 `nlist`——它们是**构建期**参数，
+> 改了必须重建索引。把它们做成环境变量只会制造"我改了配置为什么没变化"的假问题。
+
+**`ann` 与 `partitioned` 的选择**：`ann` 是单份索引，`partitioned` 是按价位/类目切成的多份分段索引
+（过滤下推）。后者只在过滤**有选择性**时才有收益——`max_price` 高过全库最高价时所有分段都会被选中，
+比单索引还慢。它解决的是"价格过滤与向量相似度无关"这一类问题，不是通用提速手段。
+判据与取舍见 [SCALING.md](SCALING.md)。
 
 ### 会话与运行期
 
@@ -199,6 +208,51 @@ data/index/
 
 指针用 `os.replace` 切换：同一文件系统内的 rename 是原子的，所以不存在"读到一半指针"的状态。
 回滚就是 `promote(上一版)`，把指针改回去——不需要重新构建。
+
+### 分段索引（过滤下推）
+
+当"价格过滤与语义相似度无关"导致 ANN 精度崩掉时（见 [SCALING.md](SCALING.md) 2.7 节），
+正解不是继续调参，而是把过滤做进索引结构：按价位分段建索引，查询时先按 `max_price` 选段。
+
+```bash
+python -m shopping_agent.cli --build-partitioned-index data/index/v4 \
+    --partition-by price --partition-buckets 8 --ann-kind ivf \
+    --catalog-snapshot --catalog data/products.jsonl
+```
+
+发布与回滚流程与单索引**完全一致**（`--promote-version` / `--rollback-index` 不需要区分）：
+分段索引同样会写一份标准 `manifest.json`，否则它就会被排除在原子发布链路之外。
+目录多一层：
+
+```
+data/index/v4/
+├── manifest.json        # 标准清单：index_type=partitioned，含 partition_by / partition_count
+├── partitions.json      # 分段布局：每段的目录、商品数、价格区间、类目集合
+├── part-0000/
+│   ├── ann.index
+│   ├── members.npy      # 本段商品在全局目录中的下标
+│   └── vectors.npy
+└── part-0001/ ...
+```
+
+`members.npy` 不是可有可无的附属品：每个分段有**自己的局部下标**，而返回给调用方的必须是
+全局商品下标。少了这层映射，检索会把 A 的向量返回成 B 的商品——这是正确性问题，不是性能问题。
+
+用 `RETRIEVER_BACKEND=ann` 加载分段目录会**直接报错**并提示正确入口。把 N 个分段当成一份索引读，
+只会得到一个溯源不出来的维度错误。
+
+### 开启精确重排
+
+```bash
+# 索引必须保留 vectors.npy（构建时不要加 --no-vectors）
+RETRIEVER_BACKEND=ann ANN_RERANK_CANDIDATES=500 python -m shopping_agent.cli --query "轻便运动鞋"
+```
+
+重排是"粗召回 + 精确重排"的后半段：先取 500 个候选，再用原始向量重算分数。
+它让 IVF-PQ 的压缩收益真正兑现（recall@10 从 0.097 回到 0.9375），代价是这次查询多算 500 次内积。
+
+配了 `ANN_RERANK_CANDIDATES` 却没有 `vectors.npy` 时**直接报错**，不会静默降级——
+静默降级的代价不是"白配了"，而是让人误以为"重排没用"，进而把已经有效的优化删掉。
 
 ### 增量更新
 
