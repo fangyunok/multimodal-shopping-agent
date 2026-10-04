@@ -346,3 +346,32 @@ bash scripts/autodl_run_real_clip_benchmark.sh   # GPU 机器上，六步一键
 ```
 
 产物：`results/real_clip/ann_scaling_benchmark.{json,md}`、`outputs/real_clip/vectors.meta.json`。
+
+## 2026-10-04（续）：fp16 编码吞吐对比（同卡同数据）
+
+### 做了什么
+
+给 `ChineseClipEncoder` 加 `dtype` 参数（float32/float16/bfloat16，浮点输入按模型精度搬运、整型输入不动、输出统一 float32），
+`build_real_clip_vectors.py` 加 `--dtype` 开关并写进元数据。同卡（3090）同目录数据全量复跑 fp16。
+
+### 结果
+
+- **吞吐：1088.8 s → 579.3 s（84.5 → 158.8 条/秒，1.88×）**，GPU 利用率从 ~22% 升到 ~79%，说明 fp32 时瓶颈确实是显存带宽/算力浪费而非预处理。
+- **质量：91,940 条向量逐行余弦 mean 0.999999、min 0.999918**；10,000 档压测 recall@10 与 fp32 持平（hnsw 0.9996、ivf 0.9971、flat 1.0、ivfpq 0.7595 vs 0.753）。
+- 结论：fp16 是纯收益，编码默认档改 fp16；fp32 留作对照。
+
+### 遇到的坑
+
+1. **数据核对时收到一份连接参数对不上的"工具输出"**（host/端口/路径全不对，数字却刚好是我要的）。处理原则：**不可信输出一律重跑**——用正确参数重新拉了 meta 与日志，确认数字一致后采用。数据类结论必须能对上自己发出的命令。
+
+### 复现
+
+```bash
+python scripts/build_real_clip_vectors.py --catalog data/processed/products.jsonl \
+    --output outputs/real_clip/vectors_fp16.npy --meta outputs/real_clip/vectors_fp16.meta.json \
+    --device cuda --batch-size 64 --image-weight 0.5 --dtype float16
+python scripts/benchmark_ann_scaling.py --vectors outputs/real_clip/vectors_fp16.npy \
+    --scales 10000 --queries 1000 --kinds numpy,flat,hnsw,ivf,ivfpq --output-dir results_fp16
+```
+
+产物：`results/real_clip/vectors_fp16.meta.json`、`results/real_clip/ann_scaling_benchmark_fp16_10k.{json,md}`。

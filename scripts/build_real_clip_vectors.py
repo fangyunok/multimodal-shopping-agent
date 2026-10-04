@@ -66,6 +66,8 @@ def main() -> None:
     parser.add_argument("--model-id", default=DEFAULT_MODEL, help="Hugging Face 模型名（--model 未给时用它）")
     parser.add_argument("--model", default=None, help="本地模型目录；给了就不联网下载")
     parser.add_argument("--device", default="cuda", help="cuda / cpu")
+    parser.add_argument("--dtype", default="float32", choices=["float32", "float16", "bfloat16"],
+                        help="编码精度；float16/bfloat16 在 Ampere+ GPU 上约为 float32 的 2 倍吞吐")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--image-weight", type=float, default=0.5, help="与线上索引保持一致（默认 0.5）")
     parser.add_argument("--limit", type=int, default=0, help="只编码前 N 条；0 表示全部")
@@ -93,7 +95,8 @@ def main() -> None:
         print("警告：没有任何商品能解析到图片，本次实际只编码了文本向量（等于 image_weight=0）")
 
     encoder = ChineseClipEncoder(
-        model_name=args.model or args.model_id, device=args.device, batch_size=args.batch_size
+        model_name=args.model or args.model_id, device=args.device, batch_size=args.batch_size,
+        dtype=args.dtype,
     )
     start = time.perf_counter()
     vectors = np.asarray(encode_products(products, catalog, encoder, args.image_weight), dtype=np.float32)
@@ -112,6 +115,7 @@ def main() -> None:
         "products_total": len(products),
         "model": args.model or args.model_id,
         "device": args.device,
+        "dtype": args.dtype,
         "batch_size": args.batch_size,
         "catalog": str(catalog),
         "catalog_sha256": catalog_sha256(catalog),

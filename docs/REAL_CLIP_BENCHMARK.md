@@ -114,9 +114,30 @@ ABO 在 S3 上按**与归档相同的目录结构**开放，因此不需要下�
 | 图片下载 | 24 并发，约 37 张/秒，全量约 35 分钟 |
 | 编码 | 91,940 条 × 512 维，fp32、batch 64，**1088.8 s（84.5 条/秒，0.0118 s/条）**，全部商品均解析到本地图片 |
 | 压测 | 档位 10,000 / 90,940，查询 1000 条/档，top-10 |
-| 总成本 | 实例从开机到关机约 2 小时 ≈ **3 元** |
+| 总成本 | 实例从开机到关机约 2.5 小时 ≈ **4 元** |
 
 `encode_seconds` / `seconds_per_item` 由 `vectors.meta.json` 自动记录，换卡后按该读数重估成本即可。
+
+### 编码精度对比：fp32 vs fp16（同卡同数据，2026-10-04）
+
+编码器支持 `--dtype float16/bfloat16`（`ChineseClipEncoder(dtype=...)`，浮点输入按模型精度搬运、输出统一 float32）。
+同卡同目录数据全量复跑：
+
+| 指标 | fp32 | fp16 | 结论 |
+|---|---|---|---|
+| 全量编码（91,940 条） | 1088.8 s（84.5 条/s） | **579.3 s（158.8 条/s）** | **1.88× 提速**，编码耗时直接减半 |
+| 向量一致性（逐行余弦） | — | mean 0.999999 / min 0.999918 | 与 fp32 向量几乎逐位一致 |
+| recall@10 @10,000（hnsw / ivf） | 0.9994 / 0.9971 | 0.9996 / 0.9971 | 持平 |
+| recall@10 @10,000（flat / ivfpq） | 0.9999 / 0.753 | 1.0 / 0.7595 | 持平（差异在噪声内） |
+
+**结论：fp16 编码是纯收益**——吞吐翻倍、召回不动、向量与 fp32 余弦 ≥ 0.9999。线上索引构建与压测导出默认用 fp16 即可；
+fp32 保留作对照基准。完整对比数据：[results/real_clip/ann_scaling_benchmark_fp16_10k.md](../results/real_clip/ann_scaling_benchmark_fp16_10k.md)。
+
+```bash
+# fp16 编码一行开关
+python scripts/build_real_clip_vectors.py --catalog data/processed/products.jsonl \
+    --output outputs/real_clip/vectors.npy --device cuda --dtype float16
+```
 
 ### 索引层（真实向量，规模 90,940）
 

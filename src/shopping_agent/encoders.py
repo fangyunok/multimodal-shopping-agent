@@ -28,17 +28,31 @@ class ChineseClipEncoder:
         model_name: str = "OFA-Sys/chinese-clip-vit-base-patch16",
         device: str = "cpu",
         batch_size: int = 16,
+        dtype: str = "float32",
     ):
         try:
             import torch
             from transformers import ChineseCLIPModel, ChineseCLIPProcessor
         except ImportError as error:
             raise RuntimeError('中文 CLIP 依赖未安装，请执行 pip install -e ".[clip]"') from error
+        dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
+        if dtype not in dtype_map:
+            raise ValueError(f"不支持的 dtype：{dtype}（可选 {sorted(dtype_map)}）")
         self.torch = torch
         self.device = device
         self.batch_size = batch_size
+        self.dtype = dtype_map[dtype]
         self.processor = ChineseCLIPProcessor.from_pretrained(model_name)
-        self.model = ChineseCLIPModel.from_pretrained(model_name).to(device).eval()
+        self.model = ChineseCLIPModel.from_pretrained(model_name).to(device, dtype=self.dtype).eval()
+
+    def _to_device(self, inputs: dict):
+        """浮点输入按模型精度搬运，整型输入（input_ids / attention_mask）保持原样。"""
+        return {
+            key: value.to(self.device, dtype=self.dtype)
+            if value.is_floating_point()
+            else value.to(self.device)
+            for key, value in inputs.items()
+        }
 
     def encode_texts(self, texts: Sequence[str]) -> np.ndarray:
         batches = []
@@ -50,7 +64,7 @@ class ChineseClipEncoder:
                 max_length=512,
                 return_tensors="pt",
             )
-            inputs = {key: value.to(self.device) for key, value in inputs.items()}
+            inputs = self._to_device(inputs)
             with self.torch.inference_mode():
                 # Some published Chinese-CLIP configs disable the BERT pooler,
                 # while recent Transformers get_text_features expects it.
@@ -70,7 +84,7 @@ class ChineseClipEncoder:
                 for path in paths[start : start + self.batch_size]:
                     images.append(Image.open(path).convert("RGB"))
                 inputs = self.processor(images=images, return_tensors="pt")
-                inputs = {key: value.to(self.device) for key, value in inputs.items()}
+                inputs = self._to_device(inputs)
                 with self.torch.inference_mode():
                     vectors = self.model.get_image_features(**inputs)
                 batches.append(vectors.float().cpu().numpy())
