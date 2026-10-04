@@ -173,15 +173,21 @@ def load_real_corpus(
     if raw.ndim != 2:
         raise ValueError(f"向量文件应为二维 (N, D)，实际是 {raw.shape}")
     vectors = normalize(np.asarray(raw, dtype=np.float32))
-    needed = count + args.queries
+    # 外部查询模式：查询不从语料切出（由 apply_external_queries 装配），语料只需前缀 count 条
+    external_queries = getattr(args, "queries_file", None) is not None
+    needed = count if external_queries else count + args.queries
     if vectors.shape[0] < needed:
         raise ValueError(
             f"向量文件只有 {vectors.shape[0]} 条，切不出 {count} 条语料 + {args.queries} 条查询"
             f"（需要 {needed} 条）。导出时多留查询余量，或调小 --scales / --queries"
         )
     corpus_vectors = vectors[:count]
-    query_vectors = vectors[count:needed]
-    ground_truth = exact_neighbors(corpus_vectors, query_vectors, args.top_k)
+    if external_queries:
+        query_vectors = np.zeros((0, corpus_vectors.shape[1]), dtype=np.float32)
+        ground_truth = np.zeros((0, args.top_k), dtype=np.int64)
+    else:
+        query_vectors = vectors[count:needed]
+        ground_truth = exact_neighbors(corpus_vectors, query_vectors, args.top_k)
     products = load_catalog(catalog_path)[:count] if catalog_path is not None else []
     corpus = SyntheticCorpus(
         vectors=corpus_vectors,
@@ -201,6 +207,50 @@ def load_real_corpus(
         "raw_vectors_mb": round(corpus_vectors.nbytes / (1024 * 1024), 3),
     }
     return corpus, summary
+
+
+def apply_external_queries(corpus, vectors_catalog: Path, args: argparse.Namespace, count: int) -> dict:
+    """把外部文本查询装进语料容器，真值装配为「单元素集合（原商品行号）」。
+
+    recall 的实现是通用集合交集：真值只有 1 个元素时，recall@k 自动退化为
+    hit@k（原商品出现在 top-k 的比例）。原商品**保留在语料内**——用户描述想买的
+    东西、检索把它排进 top-k 本来就是正确行为，要测的正是文本查询 → 图文融合向量
+    的跨表达匹配能力（这也是与「同分布切片查询」的直接对照口径）。
+    """
+    queries_path = Path(args.queries_file).resolve()
+    rows = [
+        json.loads(line)
+        for line in Path(args.queries_catalog).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    raw = normalize(np.load(queries_path))
+    if raw.shape[0] != len(rows):
+        raise ValueError(f"查询向量 {raw.shape[0]} 条与 jsonl {len(rows)} 行不对齐")
+    if raw.shape[1] != corpus.dimension:
+        raise ValueError(f"查询维度 {raw.shape[1]} 与语料维度 {corpus.dimension} 不一致")
+    products = load_catalog(vectors_catalog)
+    id_to_row = {product.id: row for row, product in enumerate(products[:count])}
+    kept: list[np.ndarray] = []
+    truth: list[list[int]] = []
+    skipped = 0
+    for vector, row in zip(raw, rows):
+        target = id_to_row.get(row.get("product_id"))
+        if target is None:  # 原商品不在当前语料档位内：小规模档会自然出现，跳过并计数
+            skipped += 1
+            continue
+        kept.append(vector)
+        truth.append([target])
+    if not kept:
+        raise SystemExit("外部查询没有任何一条能映射到语料（product_id 对不上 --vectors-catalog 前 count 条）")
+    corpus.queries = np.asarray(kept, dtype=np.float32)
+    corpus.ground_truth = np.asarray(truth, dtype=np.int64)
+    args.queries = len(kept)
+    return {
+        "queries_source": "text",
+        "queries_file": queries_path.name,
+        "queries": len(kept),
+        "queries_skipped_unmapped": skipped,
+    }
 
 
 def benchmark_index(kind: str, corpus, args: argparse.Namespace) -> dict:
@@ -394,10 +444,19 @@ def render_markdown(payload: dict) -> str:
         dimension = (
             payload["scales"][0]["corpus"]["dimension"] if payload["scales"] else config["dimension"]
         )
-        corpus_line = (
-            f"- 语料：**真实向量**（{config.get('corpus_name', 'vectors.npy')}，{dimension} 维；"
-            f"{config['queries']} 条查询从向量文件末尾切出，与语料不重叠）"
-        )
+        if config.get("queries_source") == "text":
+            corpus_line = (
+                f"- 语料：**真实向量**（{config.get('corpus_name', 'vectors.npy')}，{dimension} 维；"
+                f"查询：**文本查询**（{config.get('queries_file', 'queries.npy')}）——"
+                "指标为 hit@k：生成查询的原商品（保留在语料内）出现在 top-k 的比例，"
+                "测的是「用户打字描述 → 图文融合索引」的跨表达匹配能力，"
+                "与同分布切片查询的 recall 形成直接对照"
+            )
+        else:
+            corpus_line = (
+                f"- 语料：**真实向量**（{config.get('corpus_name', 'vectors.npy')}，{dimension} 维；"
+                f"{config['queries']} 条查询从向量文件末尾切出，与语料不重叠）"
+            )
     else:
         corpus_line = (
             f"- 语料：合成语料，{config['dimension']} 维、{config['clusters']} 个簇、"
@@ -584,6 +643,17 @@ def main() -> None:
         default=0,
         help="从向量文件末尾切多少条做查询；默认与 --queries 相同。查询段与语料段不重叠",
     )
+    parser.add_argument(
+        "--queries-file",
+        default=None,
+        help="外部查询向量 .npy（如 build_query_set.py 生成的文本查询）。给了它查询不再从语料切出，"
+        "指标变为 hit@k：生成查询的原商品（保留在语料内）出现在 top-k 的比例",
+    )
+    parser.add_argument(
+        "--queries-catalog",
+        default=None,
+        help="与 --queries-file 逐行对齐的 jsonl（每行含 product_id，即生成该查询的商品）",
+    )
     parser.add_argument("--output-dir", default="results")
     args = parser.parse_args()
 
@@ -598,7 +668,15 @@ def main() -> None:
     real_catalog = Path(args.vectors_catalog).resolve() if args.vectors_catalog else None
     if real_vectors is not None and not real_vectors.exists():
         raise SystemExit(f"--vectors 指向的文件不存在：{real_vectors}")
-    if args.vectors_query_count:
+    queries_file = Path(args.queries_file).resolve() if args.queries_file else None
+    queries_catalog = Path(args.queries_catalog).resolve() if args.queries_catalog else None
+    if queries_file is not None and not queries_file.exists():
+        raise SystemExit(f"--queries-file 指向的文件不存在：{queries_file}")
+    if (queries_file is None) != (queries_catalog is None):
+        raise SystemExit("--queries-file 与 --queries-catalog 必须成对给出")
+    if queries_file is not None and real_catalog is None:
+        raise SystemExit("外部查询模式需要 --vectors-catalog 来把 product_id 映射到语料行号")
+    if args.vectors_query_count and queries_file is None:
         args.queries = args.vectors_query_count
     if real_vectors is not None and not args.skip_retriever:
         # 检索层探针靠 SyntheticEncoder 的商品 token 定位答案，真实向量没有这套 token，
@@ -623,6 +701,8 @@ def main() -> None:
             "scales": scales,
             "corpus": "real" if real_vectors is not None else "synthetic",
             "corpus_name": real_vectors.name if real_vectors is not None else "",
+            "queries_source": "text" if queries_file is not None else ("vectors" if real_vectors is not None else "synthetic"),
+            "queries_file": queries_file.name if queries_file is not None else "",
             "dimension": args.dimension,
             "queries": args.queries,
             "top_k": args.top_k,
@@ -646,6 +726,9 @@ def main() -> None:
         print(f"\n=== 规模 {count:,} ===")
         if real_vectors is not None:
             corpus, corpus_summary = load_real_corpus(real_vectors, real_catalog, count, args)
+            if queries_file is not None:
+                # 每个 scale 都要重新装配：product_id → 语料行号的映射随档位变化（小档会跳过更多）
+                corpus_summary.update(apply_external_queries(corpus, real_catalog, args, count))
         else:
             corpus = generate_corpus(
                 count=count,
