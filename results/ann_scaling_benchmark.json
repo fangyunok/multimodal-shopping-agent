@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T04:14:31.118847+00:00",
+  "generated_at": "2026-10-04T06:11:19.630054+00:00",
   "environment": {
     "python": "3.13.14",
     "numpy": "2.5.3",
@@ -23,6 +23,17 @@
       "numpy",
       "flat",
       "hnsw",
+      "ivf",
+      "ivfpq"
+    ],
+    "rerank_sizes": [
+      10,
+      100,
+      500
+    ],
+    "partition_by": "price",
+    "partition_buckets": 16,
+    "partition_kinds": [
       "ivf",
       "ivfpq"
     ]
@@ -52,13 +63,27 @@
           "bytes_per_vector": 2048.0,
           "rss_delta_mb": 0.2,
           "recall_at_k": 1.0,
-          "qps_batch32": 73826.3,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 58326.8,
           "p50_ms": 0.09,
-          "p95_ms": 0.1,
-          "p99_ms": 0.119,
-          "mean_ms": 0.092,
-          "max_ms": 0.365,
-          "qps_single": 10840.0
+          "p95_ms": 0.135,
+          "p99_ms": 0.214,
+          "mean_ms": 0.098,
+          "max_ms": 0.332,
+          "qps_single": 10207.6
         },
         {
           "kind": "flat",
@@ -70,15 +95,29 @@
           "build_seconds": 0.0,
           "index_mb": 0.195,
           "bytes_per_vector": 2048.4,
-          "rss_delta_mb": 0.0,
+          "rss_delta_mb": 0.2,
           "recall_at_k": 1.0,
-          "qps_batch32": 233434.7,
-          "p50_ms": 0.032,
-          "p95_ms": 0.038,
-          "p99_ms": 0.101,
-          "mean_ms": 0.034,
-          "max_ms": 0.119,
-          "qps_single": 29520.7
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 171290.9,
+          "p50_ms": 0.047,
+          "p95_ms": 0.065,
+          "p99_ms": 0.146,
+          "mean_ms": 0.05,
+          "max_ms": 0.175,
+          "qps_single": 19894.6
         },
         {
           "kind": "hnsw",
@@ -89,18 +128,32 @@
             "ef_construction": 200,
             "ef_search": 64
           },
-          "build_seconds": 0.008,
+          "build_seconds": 0.011,
           "index_mb": 0.221,
           "bytes_per_vector": 2320.8,
           "rss_delta_mb": 0.2,
           "recall_at_k": 1.0,
-          "qps_batch32": 90702.9,
-          "p50_ms": 0.089,
-          "p95_ms": 0.097,
-          "p99_ms": 0.101,
-          "mean_ms": 0.091,
-          "max_ms": 0.164,
-          "qps_single": 11041.2
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 6372.3,
+          "p50_ms": 0.103,
+          "p95_ms": 0.121,
+          "p99_ms": 0.177,
+          "mean_ms": 0.105,
+          "max_ms": 0.206,
+          "qps_single": 9558.0
         },
         {
           "kind": "ivf",
@@ -111,18 +164,32 @@
             "nprobe": 2,
             "nlist_configured": 2
           },
-          "build_seconds": 0.001,
+          "build_seconds": 0.009,
           "index_mb": 0.2,
           "bytes_per_vector": 2098.5,
-          "rss_delta_mb": 0.1,
+          "rss_delta_mb": 0.2,
           "recall_at_k": 1.0,
-          "qps_batch32": 96837.6,
-          "p50_ms": 0.047,
-          "p95_ms": 0.05,
-          "p99_ms": 0.069,
-          "mean_ms": 0.047,
-          "max_ms": 0.098,
-          "qps_single": 21209.1
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 78846.9,
+          "p50_ms": 0.048,
+          "p95_ms": 0.056,
+          "p99_ms": 0.071,
+          "mean_ms": 0.049,
+          "max_ms": 0.185,
+          "qps_single": 20255.6
         },
         {
           "kind": "ivfpq",
@@ -131,7 +198,7 @@
         }
       ],
       "retriever": {
-        "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-43pvyiar\\synthetic_catalog_100.jsonl",
+        "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-_zxs8v9s\\synthetic_catalog_100.jsonl",
         "probes": 50,
         "budget_moderate": 195.316,
         "budget_tight": 83.7157,
@@ -155,11 +222,14 @@
               "kind": "numpy",
               "rounds": 1,
               "requested_k": 100,
+              "target": 10,
               "examined": 100,
               "matched": 1,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "exact",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": true
             }
           },
@@ -182,11 +252,14 @@
               "kind": "flat",
               "rounds": 1,
               "requested_k": 100,
+              "target": 10,
               "examined": 100,
               "matched": 1,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "exact",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": true
             }
           },
@@ -209,11 +282,14 @@
               "kind": "hnsw",
               "rounds": 1,
               "requested_k": 100,
+              "target": 10,
               "examined": 99,
               "matched": 1,
               "oversample": 4.0,
               "under_delivered": true,
               "fallback": "exact",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": true
             }
           },
@@ -236,11 +312,14 @@
               "kind": "ivf",
               "rounds": 1,
               "requested_k": 100,
+              "target": 10,
               "examined": 100,
               "matched": 1,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "exact",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": true
             }
           },
@@ -248,6 +327,43 @@
             "kind": "ivfpq",
             "status": "error",
             "reason": "ValueError: IVF-PQ 的 PQ 码本训练需要约 9984 条向量（39 × 2^8），当前只有 100 条。样本不足时召回率会被严重低估，请改用 ivf / hnsw，或先把训练集做大。"
+          },
+          {
+            "kind": "ivf+partition",
+            "status": "ok",
+            "point_query_top1": 1.0,
+            "moderate_set_match": 1.0,
+            "moderate_jaccard": 1.0,
+            "moderate_missing_total": 0,
+            "moderate_rounds_mean": 1.0,
+            "moderate_rounds_max": 1,
+            "moderate_scanned_fraction": 0.25,
+            "tight_set_match": 1.0,
+            "tight_jaccard": 1.0,
+            "tight_missing_total": 0,
+            "tight_rounds_mean": 1.0,
+            "tight_rounds_max": 1,
+            "tight_scanned_fraction": 0.07,
+            "last_stats": {
+              "mode": "partitioned",
+              "by": "price",
+              "partitions_total": 16,
+              "partitions_scanned": 1,
+              "partitions_pruned": 15,
+              "scanned_products": 7,
+              "scanned_fraction": 0.07,
+              "candidates": 1,
+              "rounds": 1,
+              "examined": 7
+            },
+            "partitions": 16,
+            "partition_min": 6,
+            "partition_max": 7
+          },
+          {
+            "kind": "ivfpq+partition",
+            "status": "error",
+            "reason": "ValueError: IVF-PQ 的 PQ 码本训练需要约 9984 条向量（39 × 2^8），当前只有 7 条。样本不足时召回率会被严重低估，请改用 ivf / hnsw，或先把训练集做大。"
           }
         ]
       }
@@ -271,18 +387,32 @@
           "effective": {
             "ntotal": 1000
           },
-          "build_seconds": 0.001,
+          "build_seconds": 0.002,
           "index_mb": 1.953,
           "bytes_per_vector": 2048.0,
           "rss_delta_mb": 0.0,
           "recall_at_k": 1.0,
-          "qps_batch32": 11346.7,
-          "p50_ms": 0.379,
-          "p95_ms": 0.515,
-          "p99_ms": 0.575,
-          "mean_ms": 0.393,
-          "max_ms": 0.6,
-          "qps_single": 2541.8
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 1284.2,
+          "p50_ms": 0.414,
+          "p95_ms": 0.715,
+          "p99_ms": 0.851,
+          "mean_ms": 0.448,
+          "max_ms": 1.015,
+          "qps_single": 2233.9
         },
         {
           "kind": "flat",
@@ -291,18 +421,32 @@
           "effective": {
             "ntotal": 1000
           },
-          "build_seconds": 0.001,
+          "build_seconds": 0.002,
           "index_mb": 1.953,
           "bytes_per_vector": 2048.0,
-          "rss_delta_mb": 1.9,
+          "rss_delta_mb": 2.0,
           "recall_at_k": 1.0,
-          "qps_batch32": 33462.9,
-          "p50_ms": 0.14,
-          "p95_ms": 0.23,
-          "p99_ms": 0.278,
-          "mean_ms": 0.164,
-          "max_ms": 0.498,
-          "qps_single": 6093.9
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 19670.9,
+          "p50_ms": 0.238,
+          "p95_ms": 0.526,
+          "p99_ms": 0.728,
+          "mean_ms": 0.275,
+          "max_ms": 1.431,
+          "qps_single": 3630.9
         },
         {
           "kind": "hnsw",
@@ -313,18 +457,32 @@
             "ef_construction": 200,
             "ef_search": 64
           },
-          "build_seconds": 0.302,
+          "build_seconds": 0.803,
           "index_mb": 2.212,
           "bytes_per_vector": 2319.7,
           "rss_delta_mb": 2.3,
           "recall_at_k": 1.0,
-          "qps_batch32": 40778.2,
-          "p50_ms": 0.257,
-          "p95_ms": 0.307,
-          "p99_ms": 0.341,
-          "mean_ms": 0.261,
-          "max_ms": 0.757,
-          "qps_single": 3827.3
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 9520.9,
+          "p50_ms": 0.249,
+          "p95_ms": 0.386,
+          "p99_ms": 0.645,
+          "mean_ms": 0.277,
+          "max_ms": 0.993,
+          "qps_single": 3605.5
         },
         {
           "kind": "ivf",
@@ -335,18 +493,32 @@
             "nprobe": 25,
             "nlist_configured": 25
           },
-          "build_seconds": 0.013,
+          "build_seconds": 0.017,
           "index_mb": 2.01,
           "bytes_per_vector": 2107.5,
-          "rss_delta_mb": 4.2,
+          "rss_delta_mb": 5.1,
           "recall_at_k": 1.0,
-          "qps_batch32": 32711.5,
-          "p50_ms": 0.188,
-          "p95_ms": 0.208,
-          "p99_ms": 0.246,
-          "mean_ms": 0.193,
-          "max_ms": 0.265,
-          "qps_single": 5177.5
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 23654.1,
+          "p50_ms": 0.223,
+          "p95_ms": 0.484,
+          "p99_ms": 0.711,
+          "mean_ms": 0.272,
+          "max_ms": 1.23,
+          "qps_single": 3672.4
         },
         {
           "kind": "ivfpq",
@@ -355,7 +527,7 @@
         }
       ],
       "retriever": {
-        "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-wifawjn5\\synthetic_catalog_1000.jsonl",
+        "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-de063zf8\\synthetic_catalog_1000.jsonl",
         "probes": 50,
         "budget_moderate": 202.976,
         "budget_tight": 56.938900000000004,
@@ -379,11 +551,14 @@
               "kind": "numpy",
               "rounds": 3,
               "requested_k": 1000,
+              "target": 10,
               "examined": 1640,
               "matched": 10,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "none",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -406,11 +581,14 @@
               "kind": "flat",
               "rounds": 3,
               "requested_k": 1000,
+              "target": 10,
               "examined": 1640,
               "matched": 10,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "none",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -433,11 +611,14 @@
               "kind": "hnsw",
               "rounds": 3,
               "requested_k": 1000,
+              "target": 10,
               "examined": 1408,
               "matched": 10,
               "oversample": 4.0,
               "under_delivered": true,
               "fallback": "exact",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -460,11 +641,14 @@
               "kind": "ivf",
               "rounds": 3,
               "requested_k": 1000,
+              "target": 10,
               "examined": 1640,
               "matched": 10,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "none",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -472,6 +656,43 @@
             "kind": "ivfpq",
             "status": "error",
             "reason": "ValueError: IVF-PQ 的 PQ 码本训练需要约 9984 条向量（39 × 2^8），当前只有 1000 条。样本不足时召回率会被严重低估，请改用 ivf / hnsw，或先把训练集做大。"
+          },
+          {
+            "kind": "ivf+partition",
+            "status": "ok",
+            "point_query_top1": 1.0,
+            "moderate_set_match": 1.0,
+            "moderate_jaccard": 1.0,
+            "moderate_missing_total": 0,
+            "moderate_rounds_mean": 1.0,
+            "moderate_rounds_max": 1,
+            "moderate_scanned_fraction": 0.25,
+            "tight_set_match": 1.0,
+            "tight_jaccard": 1.0,
+            "tight_missing_total": 0,
+            "tight_rounds_mean": 1.0,
+            "tight_rounds_max": 1,
+            "tight_scanned_fraction": 0.063,
+            "last_stats": {
+              "mode": "partitioned",
+              "by": "price",
+              "partitions_total": 16,
+              "partitions_scanned": 1,
+              "partitions_pruned": 15,
+              "scanned_products": 63,
+              "scanned_fraction": 0.063,
+              "candidates": 10,
+              "rounds": 1,
+              "examined": 63
+            },
+            "partitions": 16,
+            "partition_min": 62,
+            "partition_max": 63
+          },
+          {
+            "kind": "ivfpq+partition",
+            "status": "error",
+            "reason": "ValueError: IVF-PQ 的 PQ 码本训练需要约 9984 条向量（39 × 2^8），当前只有 63 条。样本不足时召回率会被严重低估，请改用 ivf / hnsw，或先把训练集做大。"
           }
         ]
       }
@@ -495,18 +716,32 @@
           "effective": {
             "ntotal": 10000
           },
-          "build_seconds": 0.017,
+          "build_seconds": 0.021,
           "index_mb": 19.531,
           "bytes_per_vector": 2048.0,
-          "rss_delta_mb": 0.0,
+          "rss_delta_mb": 0.1,
           "recall_at_k": 1.0,
-          "qps_batch32": 2918.9,
-          "p50_ms": 1.355,
-          "p95_ms": 1.548,
-          "p99_ms": 1.9,
-          "mean_ms": 1.368,
-          "max_ms": 2.185,
-          "qps_single": 730.8
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 814.7,
+          "p50_ms": 1.61,
+          "p95_ms": 2.31,
+          "p99_ms": 2.684,
+          "mean_ms": 1.678,
+          "max_ms": 3.706,
+          "qps_single": 596.0
         },
         {
           "kind": "flat",
@@ -515,18 +750,32 @@
           "effective": {
             "ntotal": 10000
           },
-          "build_seconds": 0.009,
+          "build_seconds": 0.01,
           "index_mb": 19.531,
           "bytes_per_vector": 2048.0,
-          "rss_delta_mb": 19.6,
+          "rss_delta_mb": 19.5,
           "recall_at_k": 1.0,
-          "qps_batch32": 2116.5,
-          "p50_ms": 2.258,
-          "p95_ms": 2.696,
-          "p99_ms": 2.84,
-          "mean_ms": 2.245,
-          "max_ms": 2.97,
-          "qps_single": 445.4
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 1256.5,
+          "p50_ms": 2.766,
+          "p95_ms": 4.108,
+          "p99_ms": 4.694,
+          "mean_ms": 2.85,
+          "max_ms": 5.491,
+          "qps_single": 350.9
         },
         {
           "kind": "hnsw",
@@ -537,18 +786,32 @@
             "ef_construction": 200,
             "ef_search": 64
           },
-          "build_seconds": 2.494,
+          "build_seconds": 3.287,
           "index_mb": 22.123,
           "bytes_per_vector": 2319.8,
-          "rss_delta_mb": 23.1,
+          "rss_delta_mb": 23.5,
           "recall_at_k": 1.0,
-          "qps_batch32": 10390.4,
-          "p50_ms": 0.391,
-          "p95_ms": 0.482,
-          "p99_ms": 0.587,
-          "mean_ms": 0.399,
-          "max_ms": 0.634,
-          "qps_single": 2505.1
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 6193.9,
+          "p50_ms": 0.532,
+          "p95_ms": 0.914,
+          "p99_ms": 1.327,
+          "mean_ms": 0.574,
+          "max_ms": 1.546,
+          "qps_single": 1741.2
         },
         {
           "kind": "ivf",
@@ -559,18 +822,32 @@
             "nprobe": 32,
             "nlist_configured": 256
           },
-          "build_seconds": 0.27,
+          "build_seconds": 0.303,
           "index_mb": 20.11,
           "bytes_per_vector": 2108.6,
-          "rss_delta_mb": 34.7,
+          "rss_delta_mb": 34.8,
           "recall_at_k": 1.0,
-          "qps_batch32": 10909.5,
-          "p50_ms": 0.432,
-          "p95_ms": 0.585,
-          "p99_ms": 0.694,
-          "mean_ms": 0.443,
-          "max_ms": 0.742,
-          "qps_single": 2254.8
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 7205.5,
+          "p50_ms": 0.528,
+          "p95_ms": 1.087,
+          "p99_ms": 1.438,
+          "mean_ms": 0.589,
+          "max_ms": 2.465,
+          "qps_single": 1697.0
         },
         {
           "kind": "ivfpq",
@@ -583,22 +860,36 @@
             "pq_segments": 64,
             "pq_bits": 8
           },
-          "build_seconds": 8.687,
+          "build_seconds": 10.29,
           "index_mb": 1.689,
           "bytes_per_vector": 177.1,
-          "rss_delta_mb": 3.5,
+          "rss_delta_mb": 4.7,
           "recall_at_k": 0.301,
-          "qps_batch32": 13210.2,
-          "p50_ms": 0.454,
-          "p95_ms": 0.556,
-          "p99_ms": 0.618,
-          "mean_ms": 0.464,
-          "max_ms": 0.744,
-          "qps_single": 2156.6
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.301
+            },
+            {
+              "candidates": 100,
+              "recall": 0.9995
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 14262.7,
+          "p50_ms": 0.443,
+          "p95_ms": 0.505,
+          "p99_ms": 0.547,
+          "mean_ms": 0.446,
+          "max_ms": 0.707,
+          "qps_single": 2240.8
         }
       ],
       "retriever": {
-        "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-r5c3cimu\\synthetic_catalog_10000.jsonl",
+        "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-kp4pon8k\\synthetic_catalog_10000.jsonl",
         "probes": 50,
         "budget_moderate": 207.79600000000002,
         "budget_tight": 63.1283,
@@ -622,11 +913,14 @@
               "kind": "numpy",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 2688,
               "matched": 23,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "none",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -649,11 +943,14 @@
               "kind": "flat",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 2688,
               "matched": 23,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "none",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -676,11 +973,14 @@
               "kind": "hnsw",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 1561,
               "matched": 100,
               "oversample": 4.0,
               "under_delivered": true,
               "fallback": "exact",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -703,11 +1003,14 @@
               "kind": "ivf",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 1870,
               "matched": 100,
               "oversample": 4.0,
               "under_delivered": true,
               "fallback": "exact",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -730,13 +1033,53 @@
               "kind": "ivfpq",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 1870,
               "matched": 100,
               "oversample": 4.0,
               "under_delivered": true,
               "fallback": "exact",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
+          },
+          {
+            "kind": "ivf+partition",
+            "status": "ok",
+            "point_query_top1": 1.0,
+            "moderate_set_match": 1.0,
+            "moderate_jaccard": 1.0,
+            "moderate_missing_total": 0,
+            "moderate_rounds_mean": 1.0,
+            "moderate_rounds_max": 1,
+            "moderate_scanned_fraction": 0.25,
+            "tight_set_match": 1.0,
+            "tight_jaccard": 1.0,
+            "tight_missing_total": 0,
+            "tight_rounds_mean": 1.0,
+            "tight_rounds_max": 1,
+            "tight_scanned_fraction": 0.0625,
+            "last_stats": {
+              "mode": "partitioned",
+              "by": "price",
+              "partitions_total": 16,
+              "partitions_scanned": 1,
+              "partitions_pruned": 15,
+              "scanned_products": 625,
+              "scanned_fraction": 0.0625,
+              "candidates": 10,
+              "rounds": 1,
+              "examined": 128
+            },
+            "partitions": 16,
+            "partition_min": 625,
+            "partition_max": 625
+          },
+          {
+            "kind": "ivfpq+partition",
+            "status": "error",
+            "reason": "ValueError: IVF-PQ 的 PQ 码本训练需要约 9984 条向量（39 × 2^8），当前只有 625 条。样本不足时召回率会被严重低估，请改用 ivf / hnsw，或先把训练集做大。"
           }
         ]
       }
@@ -760,18 +1103,32 @@
           "effective": {
             "ntotal": 100000
           },
-          "build_seconds": 0.145,
+          "build_seconds": 0.144,
           "index_mb": 195.312,
           "bytes_per_vector": 2048.0,
           "rss_delta_mb": 0.0,
           "recall_at_k": 1.0,
-          "qps_batch32": 492.7,
-          "p50_ms": 8.996,
-          "p95_ms": 10.031,
-          "p99_ms": 10.354,
-          "mean_ms": 9.148,
-          "max_ms": 23.29,
-          "qps_single": 109.3
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 418.6,
+          "p50_ms": 8.928,
+          "p95_ms": 10.609,
+          "p99_ms": 11.678,
+          "mean_ms": 9.033,
+          "max_ms": 12.478,
+          "qps_single": 110.7
         },
         {
           "kind": "flat",
@@ -780,18 +1137,32 @@
           "effective": {
             "ntotal": 100000
           },
-          "build_seconds": 0.06,
+          "build_seconds": 0.067,
           "index_mb": 195.313,
           "bytes_per_vector": 2048.0,
           "rss_delta_mb": 195.3,
           "recall_at_k": 1.0,
-          "qps_batch32": 164.9,
-          "p50_ms": 25.608,
-          "p95_ms": 32.228,
-          "p99_ms": 42.643,
-          "mean_ms": 26.565,
-          "max_ms": 44.014,
-          "qps_single": 37.6
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 154.5,
+          "p50_ms": 25.972,
+          "p95_ms": 31.972,
+          "p99_ms": 40.338,
+          "mean_ms": 27.144,
+          "max_ms": 135.182,
+          "qps_single": 36.8
         },
         {
           "kind": "hnsw",
@@ -802,18 +1173,32 @@
             "ef_construction": 200,
             "ef_search": 64
           },
-          "build_seconds": 23.384,
+          "build_seconds": 26.954,
           "index_mb": 221.272,
           "bytes_per_vector": 2320.2,
-          "rss_delta_mb": 221.3,
+          "rss_delta_mb": 221.7,
           "recall_at_k": 0.997,
-          "qps_batch32": 7434.6,
-          "p50_ms": 0.533,
-          "p95_ms": 0.66,
-          "p99_ms": 0.757,
-          "mean_ms": 0.54,
-          "max_ms": 0.836,
-          "qps_single": 1852.2
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.997
+            },
+            {
+              "candidates": 100,
+              "recall": 0.997
+            },
+            {
+              "candidates": 500,
+              "recall": 0.997
+            }
+          ],
+          "qps_batch32": 5748.3,
+          "p50_ms": 0.588,
+          "p95_ms": 1.144,
+          "p99_ms": 2.333,
+          "mean_ms": 0.671,
+          "max_ms": 2.532,
+          "qps_single": 1489.9
         },
         {
           "kind": "ivf",
@@ -824,18 +1209,32 @@
             "nprobe": 32,
             "nlist_configured": 1024
           },
-          "build_seconds": 8.922,
+          "build_seconds": 9.741,
           "index_mb": 198.083,
           "bytes_per_vector": 2077.1,
-          "rss_delta_mb": 254.1,
+          "rss_delta_mb": 253.7,
           "recall_at_k": 1.0,
-          "qps_batch32": 4167.2,
-          "p50_ms": 0.925,
-          "p95_ms": 1.234,
-          "p99_ms": 1.349,
-          "mean_ms": 0.941,
-          "max_ms": 1.385,
-          "qps_single": 1062.6
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 2692.6,
+          "p50_ms": 0.964,
+          "p95_ms": 1.516,
+          "p99_ms": 1.874,
+          "mean_ms": 1.017,
+          "max_ms": 2.969,
+          "qps_single": 983.5
         },
         {
           "kind": "ivfpq",
@@ -848,22 +1247,36 @@
             "pq_segments": 64,
             "pq_bits": 8
           },
-          "build_seconds": 146.652,
+          "build_seconds": 194.078,
           "index_mb": 9.374,
           "bytes_per_vector": 98.3,
           "rss_delta_mb": 16.2,
           "recall_at_k": 0.097,
-          "qps_batch32": 7452.2,
-          "p50_ms": 0.795,
-          "p95_ms": 1.003,
-          "p99_ms": 1.105,
-          "mean_ms": 0.799,
-          "max_ms": 1.235,
-          "qps_single": 1251.1
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.097
+            },
+            {
+              "candidates": 100,
+              "recall": 0.4495
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9375
+            }
+          ],
+          "qps_batch32": 4356.8,
+          "p50_ms": 1.272,
+          "p95_ms": 1.775,
+          "p99_ms": 2.117,
+          "mean_ms": 1.324,
+          "max_ms": 2.945,
+          "qps_single": 755.3
         }
       ],
       "retriever": {
-        "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-pv5oic0w\\synthetic_catalog_100000.jsonl",
+        "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-94l9xjp6\\synthetic_catalog_100000.jsonl",
         "probes": 50,
         "budget_moderate": 206.25600000000006,
         "budget_tight": 62.899699999999996,
@@ -887,11 +1300,14 @@
               "kind": "numpy",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 2688,
               "matched": 12,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "none",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -914,11 +1330,14 @@
               "kind": "flat",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 2688,
               "matched": 12,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "none",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -941,11 +1360,14 @@
               "kind": "hnsw",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 1458,
               "matched": 1000,
               "oversample": 4.0,
               "under_delivered": true,
               "fallback": "exact",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -968,11 +1390,14 @@
               "kind": "ivf",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 2688,
               "matched": 10,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "none",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
           },
@@ -995,20 +1420,60 @@
               "kind": "ivfpq",
               "rounds": 3,
               "requested_k": 2048,
+              "target": 10,
               "examined": 2688,
               "matched": 11,
               "oversample": 4.0,
               "under_delivered": false,
               "fallback": "none",
+              "rerank": "off",
+              "reranked": 0,
               "exhausted": false
             }
+          },
+          {
+            "kind": "ivf+partition",
+            "status": "ok",
+            "point_query_top1": 1.0,
+            "moderate_set_match": 0.96,
+            "moderate_jaccard": 0.9927,
+            "moderate_missing_total": 0,
+            "moderate_rounds_mean": 1.0,
+            "moderate_rounds_max": 1,
+            "moderate_scanned_fraction": 0.25,
+            "tight_set_match": 0.98,
+            "tight_jaccard": 0.9933,
+            "tight_missing_total": 0,
+            "tight_rounds_mean": 1.0,
+            "tight_rounds_max": 1,
+            "tight_scanned_fraction": 0.0625,
+            "last_stats": {
+              "mode": "partitioned",
+              "by": "price",
+              "partitions_total": 16,
+              "partitions_scanned": 1,
+              "partitions_pruned": 15,
+              "scanned_products": 6250,
+              "scanned_fraction": 0.0625,
+              "candidates": 10,
+              "rounds": 1,
+              "examined": 128
+            },
+            "partitions": 16,
+            "partition_min": 6249,
+            "partition_max": 6252
+          },
+          {
+            "kind": "ivfpq+partition",
+            "status": "error",
+            "reason": "ValueError: IVF-PQ 的 PQ 码本训练需要约 9984 条向量（39 × 2^8），当前只有 6250 条。样本不足时召回率会被严重低估，请改用 ivf / hnsw，或先把训练集做大。"
           }
         ]
       }
     }
   ],
   "retriever": {
-    "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-pv5oic0w\\synthetic_catalog_100000.jsonl",
+    "catalog": "C:\\Users\\FANGJIALI\\AppData\\Local\\Temp\\ann-bench-94l9xjp6\\synthetic_catalog_100000.jsonl",
     "probes": 50,
     "budget_moderate": 206.25600000000006,
     "budget_tight": 62.899699999999996,
@@ -1032,11 +1497,14 @@
           "kind": "numpy",
           "rounds": 3,
           "requested_k": 2048,
+          "target": 10,
           "examined": 2688,
           "matched": 12,
           "oversample": 4.0,
           "under_delivered": false,
           "fallback": "none",
+          "rerank": "off",
+          "reranked": 0,
           "exhausted": false
         }
       },
@@ -1059,11 +1527,14 @@
           "kind": "flat",
           "rounds": 3,
           "requested_k": 2048,
+          "target": 10,
           "examined": 2688,
           "matched": 12,
           "oversample": 4.0,
           "under_delivered": false,
           "fallback": "none",
+          "rerank": "off",
+          "reranked": 0,
           "exhausted": false
         }
       },
@@ -1086,11 +1557,14 @@
           "kind": "hnsw",
           "rounds": 3,
           "requested_k": 2048,
+          "target": 10,
           "examined": 1458,
           "matched": 1000,
           "oversample": 4.0,
           "under_delivered": true,
           "fallback": "exact",
+          "rerank": "off",
+          "reranked": 0,
           "exhausted": false
         }
       },
@@ -1113,11 +1587,14 @@
           "kind": "ivf",
           "rounds": 3,
           "requested_k": 2048,
+          "target": 10,
           "examined": 2688,
           "matched": 10,
           "oversample": 4.0,
           "under_delivered": false,
           "fallback": "none",
+          "rerank": "off",
+          "reranked": 0,
           "exhausted": false
         }
       },
@@ -1140,13 +1617,53 @@
           "kind": "ivfpq",
           "rounds": 3,
           "requested_k": 2048,
+          "target": 10,
           "examined": 2688,
           "matched": 11,
           "oversample": 4.0,
           "under_delivered": false,
           "fallback": "none",
+          "rerank": "off",
+          "reranked": 0,
           "exhausted": false
         }
+      },
+      {
+        "kind": "ivf+partition",
+        "status": "ok",
+        "point_query_top1": 1.0,
+        "moderate_set_match": 0.96,
+        "moderate_jaccard": 0.9927,
+        "moderate_missing_total": 0,
+        "moderate_rounds_mean": 1.0,
+        "moderate_rounds_max": 1,
+        "moderate_scanned_fraction": 0.25,
+        "tight_set_match": 0.98,
+        "tight_jaccard": 0.9933,
+        "tight_missing_total": 0,
+        "tight_rounds_mean": 1.0,
+        "tight_rounds_max": 1,
+        "tight_scanned_fraction": 0.0625,
+        "last_stats": {
+          "mode": "partitioned",
+          "by": "price",
+          "partitions_total": 16,
+          "partitions_scanned": 1,
+          "partitions_pruned": 15,
+          "scanned_products": 6250,
+          "scanned_fraction": 0.0625,
+          "candidates": 10,
+          "rounds": 1,
+          "examined": 128
+        },
+        "partitions": 16,
+        "partition_min": 6249,
+        "partition_max": 6252
+      },
+      {
+        "kind": "ivfpq+partition",
+        "status": "error",
+        "reason": "ValueError: IVF-PQ 的 PQ 码本训练需要约 9984 条向量（39 × 2^8），当前只有 6250 条。样本不足时召回率会被严重低估，请改用 ivf / hnsw，或先把训练集做大。"
       }
     ]
   },
