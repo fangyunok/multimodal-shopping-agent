@@ -46,27 +46,56 @@ def build_encoder():
     return ChineseClipEncoder(os.getenv("CLIP_MODEL_PATH", model_name), os.getenv("MODEL_DEVICE", "cpu"))
 
 
+def ann_runtime_config():
+    """ANN 的**运行期旋钮**：efSearch / nprobe 这类改了就生效、不需要重建索引的参数。
+
+    这里刻意读不到 HNSW 的 ``m`` / ``ef_construction``，也读不到 IVF 的 ``nlist``：
+    那些是构建期参数，改了必须重建。把它们暴露成环境变量只会让人以为改了就生效。
+    """
+    from .ann_index import AnnIndexConfig
+
+    return AnnIndexConfig(
+        kind=os.getenv("ANN_KIND", "hnsw"),  # type: ignore[arg-type]
+        dimension=int(os.getenv("ANN_DIMENSION", "512")),
+        ef_search=int(os.getenv("ANN_EF_SEARCH", "64")),
+        nprobe=int(os.getenv("ANN_NPROBE", "32")),
+    )
+
+
+def ann_runtime_kwargs() -> dict[str, int]:
+    """重排候选数（0 表示关闭）。
+
+    只在这里读一次：让"没配重排"和"显式关掉重排"走同一条路径，
+    避免出现"配了 0 却仍在重排"这种要读两处代码才能发现的偏差。
+    """
+    candidates = int(os.getenv("ANN_RERANK_CANDIDATES", "0"))
+    return {"rerank_candidates": candidates} if candidates else {}
+
+
 @lru_cache
 def get_tools() -> ShoppingTools:
     catalog = Path(os.getenv("CATALOG_PATH", ROOT / "data" / "products.jsonl"))
     backend = os.getenv("RETRIEVER_BACKEND", "baseline").lower()
-    if backend == "ann":
-        from .ann_index import AnnIndexConfig
-        from .faiss_retrieval import FaissRetriever
-
+    if backend in {"ann", "partitioned"}:
+        model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
         index_dir = os.getenv("INDEX_DIR")
         if not index_dir:
-            raise ValueError("RETRIEVER_BACKEND=ann 需要设置 INDEX_DIR")
-        model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
+            raise ValueError(f"RETRIEVER_BACKEND={backend} 需要设置 INDEX_DIR")
         encoder = build_encoder()
-        # 运行期只覆盖 efSearch / nprobe 这类旋钮；索引类型与维度以清单为准。
-        config = AnnIndexConfig(
-            kind=os.getenv("ANN_KIND", "hnsw"),  # type: ignore[arg-type]
-            dimension=int(os.getenv("ANN_DIMENSION", "512")),
-            ef_search=int(os.getenv("ANN_EF_SEARCH", "64")),
-            nprobe=int(os.getenv("ANN_NPROBE", "32")),
-        )
-        return ShoppingTools(FaissRetriever.from_index(catalog, index_dir, encoder, model_name, config))
+        config = ann_runtime_config()
+        if backend == "partitioned":
+            from .partitioned import PartitionedRetriever
+
+            retriever = PartitionedRetriever.from_index(
+                catalog, index_dir, encoder, config, **ann_runtime_kwargs()
+            )
+        else:
+            from .faiss_retrieval import FaissRetriever
+
+            retriever = FaissRetriever.from_index(
+                catalog, index_dir, encoder, model_name, config, **ann_runtime_kwargs()
+            )
+        return ShoppingTools(retriever)
     if backend in {"clip", "fusion"}:
         model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
         encoder = build_encoder()

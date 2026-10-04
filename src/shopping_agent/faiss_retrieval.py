@@ -37,7 +37,18 @@ k 变大并不会让图遍历自动覆盖全库。
 而不是悄悄少返回几条。
 
 最终方案是三类手段的组合，而不是单靠一种：
-预过滤/分区（把过滤维度做成索引的一部分）→ 自适应超采样 → 精确兜底。
+**过滤下推**（把过滤维度做成索引的一部分，见 ``partitioned.py``）→ 自适应超采样 → 精确兜底。
+
+粗召回 + 精确重排（``rerank_candidates``）
+--------------------------------------------
+乘积量化（IVF-PQ）把索引压到 1/21，代价是重建出来的分数有偏，所以直接用 recall@10 只有 0.097。
+但**候选集本身是好的**：取 500 条候选、用原始向量精确重排，recall@10 回到 0.9375。
+这是个业界通用的组合——先做一次便宜且召回尚可的粗筛，再对粗筛结果做一次昂贵但精确的重排。
+
+本类把它做成 ``rerank_candidates`` 一档开关：设了之后，检索目标从"凑够 top_k"抬高到
+"凑够 rerank_candidates"，凑齐后用 ``exact_vectors`` 重新算分再截断。
+代价是重排必须拿到原始向量，所以开启它等于承认 ``vectors.npy`` 不是冗余而是**必要组件**：
+压缩掉的 180 MB 内存，是用这 2 GB 副本换回来的。这两笔账必须一起看。
 
 接口与 ``SemanticRetriever`` 完全一致（``products`` / ``catalog_path`` / ``search``），
 所以 ``ScoreFusionRetriever``、``ShoppingTools``、MCP 层、FastAPI 层都不需要任何改动。
@@ -55,6 +66,33 @@ from .indexing import encode_products, load_ann_index, load_catalog, load_vector
 from .models import Product, SearchHit, SearchRequest
 
 
+def encode_request(
+    encoder: MultimodalEncoder, request: SearchRequest, dimension: int | None = None
+) -> np.ndarray | None:
+    """把请求里的文字与图片编码成单个 L2 归一化查询向量。
+
+    两者都为空时返回 ``None``——调用方据此走"按评分排序"的兜底路径，
+    而不是硬造一个零向量（零向量与任何向量的内积都是 0，会得到一批看似正常的垃圾结果）。
+
+    之所以是模块级函数而不是私有方法，是为了让 ``PartitionedRetriever`` 能**只编码一次**
+    再分发给各分段：分段一多，重复编码会比检索本身更贵。
+    """
+    parts: list[np.ndarray] = []
+    if request.query:
+        parts.append(encoder.encode_texts([request.query])[0])
+    if request.image_path:
+        parts.append(encoder.encode_images([Path(request.image_path)])[0])
+    if not parts:
+        return None
+    vector = normalize(np.asarray([sum(parts)]))[0]
+    if dimension is not None and vector.shape[0] != dimension:
+        raise ValueError(
+            f"查询向量维度 {vector.shape[0]} 与索引维度 {dimension} 不一致；"
+            "请确认索引与查询用的是同一个编码器"
+        )
+    return vector
+
+
 class FaissRetriever:
     """近似最近邻检索后端；对外行为与精确后端保持一致，差异只体现在召回率与延迟上。"""
 
@@ -69,6 +107,7 @@ class FaissRetriever:
         oversample: float = 4.0,
         max_rounds: int = 6,
         exact_vectors: np.ndarray | None = None,
+        rerank_candidates: int = 0,
     ) -> None:
         if oversample < 1:
             raise ValueError("oversample 必须大于等于 1")
@@ -76,6 +115,8 @@ class FaissRetriever:
             raise ValueError("min_candidates 必须大于等于 1")
         if max_rounds < 1:
             raise ValueError("max_rounds 必须大于等于 1")
+        if rerank_candidates < 0:
+            raise ValueError("rerank_candidates 不能为负")
         if len(products) != ann.count:
             raise ValueError(f"商品数 {len(products)} 与索引条目数 {ann.count} 不一致")
         self.products = products
@@ -91,6 +132,14 @@ class FaissRetriever:
                 f"精确向量条数 {exact_vectors.shape[0]} 与索引条目数 {ann.count} 不一致"
             )
         self.exact_vectors = normalize(exact_vectors) if exact_vectors is not None else None
+        if rerank_candidates and self.exact_vectors is None:
+            # 不能"配了重排却静默不生效"：那会让人以为重排没用，而实际是它根本没跑。
+            raise ValueError(
+                "rerank_candidates 需要原始向量才能精确重排，但索引里没有 vectors.npy。"
+                "请用 keep_vectors=True 重建索引，或把 rerank_candidates 设为 0。"
+            )
+        self.rerank_candidates = int(rerank_candidates)
+
         # 过滤用的元数据一次性抽成 numpy 数组：过滤发生在候选集上，而不是全库。
         self._prices = np.asarray([product.price for product in products], dtype=np.float64)
         self._ratings = np.asarray([product.rating for product in products], dtype=np.float64)
@@ -172,20 +221,22 @@ class FaissRetriever:
     # ---------- 检索 ----------
 
     def search(self, request: SearchRequest) -> list[SearchHit]:
-        parts: list[np.ndarray] = []
-        if request.query:
-            parts.append(self.encoder.encode_texts([request.query])[0])
-        if request.image_path:
-            parts.append(self.encoder.encode_images([Path(request.image_path)])[0])
-        if not parts:
+        query_vector = self.encode_request(request)
+        if query_vector is None:
             self.last_stats = {"mode": "rating_fallback", "rounds": 0, "examined": 0}
             return self._rank_by_rating(request)
-        query_vector = normalize(np.asarray([sum(parts)]))[0]
-        if query_vector.shape[0] != self.ann.config.dimension:
-            raise ValueError(
-                f"查询向量维度 {query_vector.shape[0]} 与索引维度 {self.ann.config.dimension} 不一致；"
-                "请确认索引与查询用的是同一个编码器"
-            )
+        return self.search_vector(query_vector, request)
+
+    def encode_request(self, request: SearchRequest) -> np.ndarray | None:
+        """把请求编码成查询向量；文字与图片都没有时返回 None。"""
+        return encode_request(self.encoder, request, self.ann.config.dimension)
+
+    def search_vector(self, query_vector: np.ndarray, request: SearchRequest) -> list[SearchHit]:
+        """给定已编码的查询向量直接检索。
+
+        ``PartitionedRetriever`` 靠它把"编码一次、分发到 N 个分段"变成可能：
+        否则分段数一多，模型前向的次数就等于分段数，比检索本身还贵。
+        """
         return self._ann_search(
             query_vector, request, has_text=bool(request.query), has_image=bool(request.image_path)
         )
@@ -195,7 +246,10 @@ class FaissRetriever:
     ) -> list[SearchHit]:
         total = self.ann.count
         wanted = int(request.top_k)
-        k = min(total, max(wanted, int(wanted * self.oversample), self.min_candidates))
+        # 开启重排时，检索目标从"凑够 top_k"抬高到"凑够 rerank_candidates"——
+        # 粗筛的价值全在候选集够大，候选集不够大时重排只能把一堆无关项排出个先后。
+        target = max(wanted, self.rerank_candidates) if self.rerank_candidates else wanted
+        k = min(total, max(target, int(wanted * self.oversample), self.min_candidates))
         collected_indices = np.empty(0, dtype=np.int64)
         collected_scores = np.empty(0, dtype=np.float32)
         rounds = 0
@@ -225,7 +279,7 @@ class FaissRetriever:
             else:
                 collected_indices = np.concatenate([collected_indices, keep_indices])
                 collected_scores = np.concatenate([collected_scores, keep_scores])
-            if keep_indices.shape[0] >= wanted or k >= total or rounds >= self.max_rounds or under_delivered:
+            if keep_indices.shape[0] >= target or k >= total or rounds >= self.max_rounds or under_delivered:
                 break
             # 过滤太狠，候选被吃光了：把检索规模翻四倍重来。
             k = min(total, k * 4)
@@ -247,6 +301,18 @@ class FaissRetriever:
             # 代价是这一次查询退化成 O(N)，换的是"不会因为过滤而漏掉本该返回的商品"。
             collected_indices, collected_scores = self._exact_scan(query_vector, request)
             fallback = "exact"
+
+        # 精确重排：粗筛只负责"别漏"，排序交回原始向量。
+        # fallback 时结果本来就是精确的，再重排一次是白做。
+        reranked = 0
+        if fallback is None and self.rerank_candidates and collected_indices.size:
+            assert self.exact_vectors is not None
+            exact_scores = (self.exact_vectors[collected_indices] @ query_vector).astype(np.float32)
+            order = np.argsort(-exact_scores, kind="stable")
+            collected_indices = collected_indices[order]
+            collected_scores = exact_scores[order]
+            reranked = int(collected_indices.size)
+
         exhausted = collected_indices.size < wanted
 
         self.last_stats = {
@@ -254,11 +320,14 @@ class FaissRetriever:
             "kind": self.ann.config.kind,
             "rounds": rounds,
             "requested_k": requested,
+            "target": target,
             "examined": examined,
             "matched": int(collected_indices.size),
             "oversample": self.oversample,
             "under_delivered": under_delivered,
             "fallback": fallback or "none",
+            "rerank": "exact" if reranked else "off",
+            "reranked": reranked,
             "exhausted": exhausted,
         }
 
@@ -337,6 +406,7 @@ class FaissRetriever:
             "image_weight": self.image_weight,
             "oversample": self.oversample,
             "min_candidates": self.min_candidates,
+            "rerank_candidates": self.rerank_candidates,
             "exact_fallback": self.exact_vectors is not None,
             "last_stats": dict(self.last_stats),
         }

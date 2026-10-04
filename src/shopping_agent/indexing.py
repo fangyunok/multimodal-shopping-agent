@@ -45,6 +45,11 @@ class IndexManifest(BaseModel):
     index_files: list[str] = Field(default_factory=list)
     has_vectors: bool = True
     has_catalog_snapshot: bool = False
+    # 分段索引（过滤下推）专用：记录按什么维度切、切成几段。
+    # 详细的每段布局在 partitions.json 里，这里只留够定位用的字段——
+    # 加载器要先能一眼看出"这不是单索引"，才能给出可执行的报错而不是索引类型不匹配。
+    partition_by: str | None = None
+    partition_count: int = 0
     effective: dict = Field(default_factory=dict)
 
 
@@ -308,6 +313,13 @@ def load_ann_index(
     catalog = Path(catalog_path).resolve()
     index = Path(index_dir).resolve()
     manifest = read_manifest(index)
+    if manifest.partition_by is not None:
+        # 分段索引的每个分段各有自己的 ann.index，按"一份索引"去加载必然错配。
+        # 与其抛一个溯源不出来的维度错误，不如直接说清该换哪个入口。
+        raise ValueError(
+            f"{index} 是 {manifest.partition_by} 分段索引（共 {manifest.partition_count} 段），"
+            "请改用 PartitionedRetriever.from_index 加载"
+        )
     _verify_manifest(manifest, catalog, index, expected_model)
     # 有快照就用快照：并行存在多个版本时，外部目录可能已经不是这个版本的商品了。
     products = load_version_catalog(index, fallback=catalog)

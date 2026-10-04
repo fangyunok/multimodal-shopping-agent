@@ -407,3 +407,143 @@ def test_oversample_must_be_at_least_one(tmp_path: Path) -> None:
     with pytest.raises(ValueError) as error:
         FaissRetriever.from_jsonl(catalog, FakeEncoder(), oversample=0.5)
     assert "oversample" in str(error.value)
+
+
+# ---------- 粗召回 + 精确重排 ----------
+
+
+class LyingIndex:
+    """候选集完整、但**分数是假的**——模拟乘积量化用压缩码本重建出来的有偏分数。
+
+    这类偏差最隐蔽：候选集是对的，所以"有没有召回"看不出任何问题；
+    但排序是错的，用户看到的顺序就是错的。只有把分数拿去和真实余弦比对才会暴露。
+    """
+
+    def __init__(self, ann) -> None:
+        self._ann = ann
+        self.config = ann.config
+        self.count = ann.count
+
+    def search_one(self, query, top_k):
+        _, indices = self._ann.search_one(query, top_k)
+        # 分数只与"返回位置"有关：真正最相似的商品被压到末尾。
+        return np.linspace(0.0, 1.0, indices.shape[0]).astype(np.float32), indices
+
+
+def test_rerank_is_off_by_default(tmp_path: Path) -> None:
+    products, vectors, query = clustered_catalog(near=3, far=3)
+    catalog = write_catalog(tmp_path / "products.jsonl", products)
+    retriever = FaissRetriever.from_vectors(
+        products,
+        catalog,
+        QueryOnlyEncoder({"鞋": query}),
+        vectors,
+        AnnIndexConfig(kind="numpy", dimension=VECTOR_DIMENSION),
+    )
+    assert retriever.describe()["rerank_candidates"] == 0
+    retriever.search(SearchRequest(query="鞋", top_k=3))
+    assert retriever.last_stats["rerank"] == "off"
+    assert retriever.last_stats["reranked"] == 0
+
+
+def test_rerank_without_vectors_is_rejected(tmp_path: Path) -> None:
+    """配了重排却拿不到向量必须报错。
+
+    静默不生效的代价不是"白配了"，而是"得到一个"重排没用"的错误结论"——
+    这会让人把已经有效的优化删掉。
+    """
+    products, vectors, query = clustered_catalog(near=4, far=4)
+    catalog = write_catalog(tmp_path / "products.jsonl", products)
+    with pytest.raises(ValueError, match="vectors.npy"):
+        FaissRetriever.from_vectors(
+            products,
+            catalog,
+            QueryOnlyEncoder({"鞋": query}),
+            vectors,
+            AnnIndexConfig(kind="numpy", dimension=VECTOR_DIMENSION),
+            exact_vectors=None,
+            rerank_candidates=10,
+        )
+
+
+def test_rerank_recovers_the_true_ranking_from_corrupted_scores(tmp_path: Path) -> None:
+    """把候选集完整但分数被打乱的索引接上重排，排序应当完全恢复。"""
+    products, vectors, query = clustered_catalog(near=60, far=60)
+    catalog = write_catalog(tmp_path / "products.jsonl", products)
+    encoder = QueryOnlyEncoder({"鞋": query})
+    config = AnnIndexConfig(kind="numpy", dimension=VECTOR_DIMENSION)
+    request = SearchRequest(query="鞋", top_k=5)
+    expected = [hit.product.id for hit in FaissRetriever.from_vectors(products, catalog, encoder, vectors, config).search(request)]
+
+    def build(**kwargs) -> FaissRetriever:
+        retriever = FaissRetriever.from_vectors(
+            products,
+            catalog,
+            encoder,
+            vectors,
+            config,
+            min_candidates=len(products),
+            oversample=1.0,
+            **kwargs,
+        )
+        retriever.ann = LyingIndex(retriever.ann)
+        return retriever
+
+    naive = build()
+    corrupted = [hit.product.id for hit in naive.search(request)]
+    # 先证明这个测试确实造出了偏差，否则后面的"恢复"是空断言。
+    assert corrupted != expected
+    assert naive.last_stats["rerank"] == "off"
+    assert naive.last_stats["target"] == 5
+
+    reranked = build(rerank_candidates=40)
+    assert [hit.product.id for hit in reranked.search(request)] == expected
+    assert reranked.last_stats["rerank"] == "exact"
+    assert reranked.last_stats["reranked"] == len(products)
+    assert reranked.last_stats["target"] == 40
+
+
+@requires_faiss
+def test_rerank_restores_exact_scores_on_a_compressed_index(tmp_path: Path) -> None:
+    """PQ 重建出来的分数是有偏的，重排把它换回真实余弦相似度。
+
+    这是 IVF-PQ 能用的前提：它直接用的 recall@10 只有 0.097，但候选集是好的，
+    取大候选集 + 精确重排后能回到 0.94。没有重排，压缩换来的是静默的错排序。
+    """
+    products, vectors, query = clustered_catalog(near=90, far=90)
+    catalog = write_catalog(tmp_path / "products.jsonl", products)
+    encoder = QueryOnlyEncoder({"鞋": query})
+    # pq_bits=2 有两个目的：让码本足够粗、偏差足够明显；把 PQ 训练门槛降到 39×4=156 条。
+    config = AnnIndexConfig(kind="ivfpq", dimension=VECTOR_DIMENSION, pq_bits=2, nlist=8, nprobe=4)
+    request = SearchRequest(query="鞋", top_k=5)
+    position = {product.id: index for index, product in enumerate(products)}
+    exact_scores = vectors @ query
+
+    def search(**kwargs):
+        retriever = FaissRetriever.from_vectors(
+            products,
+            catalog,
+            encoder,
+            vectors,
+            config,
+            min_candidates=len(products),
+            oversample=1.0,
+            **kwargs,
+        )
+        return retriever, retriever.search(request)
+
+    naive, naive_hits = search()
+    assert naive.last_stats["rerank"] == "off"
+    assert any(
+        abs(hit.score - float(exact_scores[position[hit.product.id]])) > 1e-3 for hit in naive_hits
+    ), "IVF-PQ 的分数与真实余弦一致，说明这个测试没能体现出量化偏差"
+
+    reranked, reranked_hits = search(rerank_candidates=len(products))
+    assert reranked.last_stats["rerank"] == "exact"
+    for hit in reranked_hits:
+        assert abs(hit.score - float(exact_scores[position[hit.product.id]])) < 2e-4
+    # 候选集完整 + 分数精确 ⇒ 结果必须与精确后端逐位相同。
+    exact = FaissRetriever.from_vectors(
+        products, catalog, encoder, vectors, AnnIndexConfig(kind="numpy", dimension=VECTOR_DIMENSION)
+    )
+    assert [hit.product.id for hit in reranked_hits] == [hit.product.id for hit in exact.search(request)]

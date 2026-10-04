@@ -20,8 +20,9 @@ from .incremental import (
     load_changes,
 )
 from .llm_planner import LLMPlanner
-from .indexing import build_ann_index, build_index
+from .indexing import build_ann_index, build_index, encode_products, load_catalog
 from .models import AgentRequest
+from .partitioned import PartitionedRetriever
 from .planner import RulePlanner
 from .planner_evaluation import evaluate_planner
 from .react import ReActAgent
@@ -73,6 +74,15 @@ def ann_config_from(args) -> AnnIndexConfig:
         pq_segments=args.ann_pq_segments,
         pq_bits=args.ann_pq_bits,
     )
+
+
+def rerank_kwargs(args) -> dict[str, int]:
+    """重排是可选开关：只在显式给了候选数时才传下去。
+
+    不传（而不是统一传 0）保留了默认值的单一来源——默认值只该在 ``FaissRetriever``
+    里定义一次，否则改默认值就会漏掉所有手工传参的调用点。
+    """
+    return {"rerank_candidates": args.rerank_candidates} if args.rerank_candidates else {}
 
 
 def handle_index_versioning(args) -> bool:
@@ -148,7 +158,11 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--image-weight", type=float, default=0.5)
-    parser.add_argument("--retriever-backend", choices=("baseline", "clip", "fusion", "ann"), default="baseline")
+    parser.add_argument(
+        "--retriever-backend",
+        choices=("baseline", "clip", "fusion", "ann", "partitioned"),
+        default="baseline",
+    )
     parser.add_argument("--lexical-weight", type=float, default=0.65)
     parser.add_argument("--index-dir")
     parser.add_argument("--build-ann-index", metavar="DIRECTORY", help="按 --ann-* 参数构建指定类型的 ANN 索引")
@@ -163,6 +177,30 @@ def main() -> None:
     parser.add_argument("--ann-nprobe", type=int, default=32, help="IVF 查询扫描桶数")
     parser.add_argument("--ann-pq-segments", type=int, default=None, help="PQ 子空间数，默认按维度自动选择")
     parser.add_argument("--ann-pq-bits", type=int, default=8, help="PQ 每段编码位数")
+    parser.add_argument(
+        "--rerank-candidates",
+        type=int,
+        default=0,
+        help="粗召回 + 精确重排的候选数（0 表示关闭）。开启后分数改为用原始向量重算，"
+        "需要索引保留 vectors.npy（即不要用 --no-vectors）",
+    )
+    parser.add_argument(
+        "--build-partitioned-index",
+        metavar="DIRECTORY",
+        help="按 --partition-* 分段构建索引（过滤下推），与 --build-ann-index 互不依赖",
+    )
+    parser.add_argument(
+        "--partition-by",
+        choices=("price", "category", "category_price"),
+        default="price",
+        help="分段维度；应当选**过滤条件用到的**那一维，否则路由剪不掉任何段",
+    )
+    parser.add_argument(
+        "--partition-buckets",
+        type=int,
+        default=8,
+        help="分段数（按分位数切，每段商品数相近）。段切得越细，IVF-PQ 这类需要训练的后端越容易建不动",
+    )
     parser.add_argument("--no-vectors", action="store_true", help="不落盘 vectors.npy（省磁盘，但失去精确兜底）")
     parser.add_argument("--catalog-snapshot", action="store_true", help="把商品目录快照写进索引目录（版本自证）")
     parser.add_argument("--index-root", default="data/index", help="索引版本根目录")
@@ -237,12 +275,39 @@ def main() -> None:
         print(manifest.model_dump_json(indent=2))
         print(json.dumps(ann.summary(), ensure_ascii=False, indent=2))
         return
-    if args.retriever_backend == "ann":
+    if args.build_partitioned_index:
+        encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
+        catalog = Path(args.catalog).resolve()
+        products = load_catalog(catalog)
+        vectors = encode_products(products, catalog, encoder, args.image_weight)
+        retriever = PartitionedRetriever.from_vectors(
+            products,
+            catalog,
+            encoder,
+            vectors,
+            ann_config_from(args),
+            by=args.partition_by,
+            buckets=args.partition_buckets,
+            image_weight=args.image_weight,
+            model_name=args.model_id,
+            **rerank_kwargs(args),
+        )
+        files = retriever.save(args.build_partitioned_index, catalog_snapshot=args.catalog_snapshot)
+        print(json.dumps({"files": files, **retriever.describe()}, ensure_ascii=False, indent=2, default=str))
+        return
+    if args.retriever_backend == "partitioned":
+        if not args.index_dir:
+            parser.error("--retriever-backend partitioned 需要 --index-dir")
+        encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
+        retriever = PartitionedRetriever.from_index(
+            args.catalog, args.index_dir, encoder, ann_config_from(args), **rerank_kwargs(args)
+        )
+    elif args.retriever_backend == "ann":
         if not args.index_dir:
             parser.error("--retriever-backend ann 需要 --index-dir")
         encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
         retriever = FaissRetriever.from_index(
-            args.catalog, args.index_dir, encoder, args.model_id, ann_config_from(args)
+            args.catalog, args.index_dir, encoder, args.model_id, ann_config_from(args), **rerank_kwargs(args)
         )
     elif args.retriever_backend in {"clip", "fusion"}:
         encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)

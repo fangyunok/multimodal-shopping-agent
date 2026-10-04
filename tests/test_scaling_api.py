@@ -113,3 +113,70 @@ def test_context_budget_env_is_respected(client: TestClient, monkeypatch: pytest
     assert body["context"]["max_tokens"] == 512
     assert body["context"]["tokens"] <= 512
     assert ContextBudget(max_tokens=512).usable_tokens == 256
+
+
+# ---------- 索引运行期旋钮 ----------
+
+
+def test_rerank_candidates_env_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0 与"没配"必须走同一条路径——否则"配了 0 却仍在重排"只有读两处代码才能发现。"""
+    monkeypatch.delenv("ANN_RERANK_CANDIDATES", raising=False)
+    assert app_module.ann_runtime_kwargs() == {}
+    monkeypatch.setenv("ANN_RERANK_CANDIDATES", "0")
+    assert app_module.ann_runtime_kwargs() == {}
+    monkeypatch.setenv("ANN_RERANK_CANDIDATES", "500")
+    assert app_module.ann_runtime_kwargs() == {"rerank_candidates": 500}
+
+
+def test_runtime_config_only_exposes_runtime_knobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """构建期参数（HNSW 的 m、IVF 的 nlist）刻意不暴露：改了它们必须重建索引。
+
+    把它们做成环境变量只会制造"我改了配置为什么没变化"的假问题。
+    """
+    from shopping_agent.ann_index import AnnIndexConfig
+
+    monkeypatch.setenv("ANN_EF_SEARCH", "128")
+    monkeypatch.setenv("ANN_NPROBE", "8")
+    monkeypatch.setenv("ANN_M", "64")
+    monkeypatch.setenv("ANN_NLIST", "16")
+    config = app_module.ann_runtime_config()
+    assert (config.ef_search, config.nprobe) == (128, 8)
+    defaults = AnnIndexConfig(kind="hnsw", dimension=512)
+    assert (config.m, config.nlist) == (defaults.m, defaults.nlist)
+
+
+def test_partitioned_backend_serves_a_partitioned_index(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """app 层必须能直接服务分段索引，否则"过滤下推"只能停留在压测脚本里。"""
+    from shopping_agent.ann_index import AnnIndexConfig
+    from shopping_agent.partitioned import PartitionedRetriever
+    from test_partitioned import QueryOnlyEncoder, banded_catalog, write_catalog
+
+    products, vectors, query = banded_catalog()
+    catalog = write_catalog(tmp_path / "products.jsonl", products)
+    PartitionedRetriever.from_vectors(
+        products,
+        catalog,
+        QueryOnlyEncoder({"鞋": query}),
+        vectors,
+        AnnIndexConfig(kind="numpy", dimension=vectors.shape[1]),
+        by="price",
+        buckets=4,
+    ).save(tmp_path / "index", catalog_snapshot=True)
+
+    monkeypatch.setenv("RETRIEVER_BACKEND", "partitioned")
+    monkeypatch.setenv("INDEX_DIR", str(tmp_path / "index"))
+    monkeypatch.setenv("ANN_KIND", "numpy")
+    monkeypatch.setenv("ANN_DIMENSION", str(vectors.shape[1]))
+    # 走远端编码器只是为了不加载真实模型：加载索引本身不编码，所以不会真的发请求。
+    monkeypatch.setenv("ENCODER_BASE_URL", "http://127.0.0.1:9/")
+    _reset_caches()
+
+    tools = app_module.get_tools()
+    assert isinstance(tools.retriever, PartitionedRetriever)
+    assert tools.retriever.describe()["by"] == "price"
+
+    body = TestClient(app_module.app).get("/readyz").json()
+    assert body["checks"]["retriever"]["products"] == len(products)
+    assert body["checks"]["index"]["partitions"] == 4
