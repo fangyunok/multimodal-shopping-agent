@@ -309,3 +309,40 @@ pytest -q                                            # 213 passed, 1 skipped
 - 十万级以上的数字按线性外推，未在本机验证。
 
 详细的机制推导、面试口径与后续项见 [SCALING.md](SCALING.md)（尤其 2.4 / 2.5 / 2.7 三节）。
+
+## 2026-10-04：真实 CLIP 向量的云端压测（92K 商品，单卡 3090）
+
+### 做了什么
+
+按 [REAL_CLIP_BENCHMARK.md](REAL_CLIP_BENCHMARK.md) 的口径，在租用的 AutoDL RTX 3090 上完成全流程：
+ABO 全量 92,320 条 listing → 91,940 条转换成功（380 条缺图跳过）→ Chinese-CLIP 图文融合编码（91,940 条 × 512 维，
+1088.8 s，84.5 条/秒）→ 两档 ANN 压测（10,000 / 90,940，查询 1000 条/档）。实例开机到关机约 2 小时，约 3 元。
+完整报告落盘 `results/real_clip/`；两条结论（选型结论在真实分布上成立、真实分布给精确扫描引入 40 倍尾延迟）写进了 SCALING.md 2.8 节。
+
+### 遇到的困难与修法
+
+1. **transformers 的 .bin 加载安全门连拦两次。** 远端 torch 2.3.0（<2.6），transformers 4.52+ 的 CVE-2025-32434
+   防护会拒绝 `torch.load` 加载 .bin 权重，而 Chinese-CLIP 只有 .bin 权重。先试升 torch：AutoDL 镜像源只有 2.2 MB/s、
+   554 MB，放弃。再降到 4.55.4 以为能绕过——不行，门在 4.52.0 就引入了（对着上游 diff 确认的）。最终 `transformers==4.51.0`
+   解决。修到源头：`pyproject.toml` 把 clip/scale 的 transformers 上限压到 `<4.52`，注释写明原因。
+2. **4.51.0 装上后又报 `init_empty_weights` 未定义**——4.51 起加载逻辑依赖 accelerate，装 `accelerate ftfy` 后通过。
+   冒烟测试（文本、图文两路编码）先跑再上全量，避免 18 分钟编码白跑。
+3. **`pkill -f "pip install -U torch"` 把自己的 shell 杀了**：`pkill -f` 匹配的是完整命令行，杀人的命令本身也含
+   "pip install -U torch"。改用字符类 `tor[c]h` 让模式匹配不到自身。老坑，值得记住。
+4. **10 万档不存在。** ABO 的 listings 分片在 S3 上实际只发布到 `listings_9`，全库 92,320 条——规划时按归档口径写的
+   14.7 万/10 万档是错的。编排脚本改成按 SCALES 自动推导 ABO_LIMIT，默认档位改为 10000,90000。
+5. **转换只出 14,762 条（skip 77,558）的第一轮试跑**：`--convert-abo` 只接受图片已在本地磁盘的商品，"先转换后补图"
+   行不通。改 `KEEP_ABO=1` + 全量 `--fetch-abo-images`（24 workers，约 37 张/秒，全量 80,310 张约 35 分钟）后二次转换
+   91,940 条、仅 380 条缺图。这 380 条是 images.csv 里登记但 S3 上 404 的图片，属数据源本身缺失。
+6. **编排脚本第一版 ABO_LIMIT 写死 100000，且低于"最大档 + 查询数"**——试跑时被压测脚本的导出量校验拦下。
+   现在由 `MAX_SCALE + QUERIES` 自动推导，想手工覆盖仍可显式设。
+7. **fast image processor 无收益**：实测 368 vs 360 张/秒，瓶颈在 GPU 前向（fp32 约 8.5 ms/条）而不是预处理。
+   记为后续项（可试 fp16/bf16，估计能到 ~2 倍）。
+
+### 复现
+
+```bash
+bash scripts/autodl_run_real_clip_benchmark.sh   # GPU 机器上，六步一键
+```
+
+产物：`results/real_clip/ann_scaling_benchmark.{json,md}`、`outputs/real_clip/vectors.meta.json`。

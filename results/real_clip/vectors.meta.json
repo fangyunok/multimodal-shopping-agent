@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-10-04T08:45:13.759364+00:00",
+  "vectors": 91940,
+  "dimension": 512,
+  "image_weight": 0.5,
+  "products_with_images": 91940,
+  "products_total": 91940,
+  "model": "OFA-Sys/chinese-clip-vit-base-patch16",
+  "device": "cuda",
+  "batch_size": 64,
+  "catalog": "/root/autodl-tmp/multimodal-shopping-agent/data/processed/products.jsonl",
+  "catalog_sha256": "c1175db8ff4f7469bfa4fa5b3c98a1dca7096ebf4c5059f0719b0c2260773bf0",
+  "encode_seconds": 1088.82,
+  "seconds_per_item": 0.0118,
+  "environment": {
+    "python": "3.12.3",
+    "platform": "Linux x86_64"
+  }
+}

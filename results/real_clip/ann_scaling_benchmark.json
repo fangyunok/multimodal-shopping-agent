@@ -1,0 +1,425 @@
+{
+  "generated_at": "2026-10-04T08:45:15.685415+00:00",
+  "environment": {
+    "python": "3.12.3",
+    "numpy": "1.26.4",
+    "faiss": "1.15.1",
+    "platform": "Linux x86_64"
+  },
+  "config": {
+    "scales": [
+      10000,
+      90940
+    ],
+    "corpus": "real",
+    "corpus_name": "vectors.npy",
+    "dimension": 512,
+    "queries": 1000,
+    "top_k": 10,
+    "clusters": 128,
+    "spread": 0.5,
+    "seed": 20261004,
+    "kinds": [
+      "numpy",
+      "flat",
+      "hnsw",
+      "ivf",
+      "ivfpq"
+    ],
+    "rerank_sizes": [
+      10,
+      100,
+      500
+    ],
+    "partition_by": "price",
+    "partition_buckets": 16,
+    "partition_kinds": [
+      "ivf",
+      "ivfpq"
+    ]
+  },
+  "scales": [
+    {
+      "count": 10000,
+      "corpus": {
+        "source": "real-vectors",
+        "name": "vectors.npy",
+        "vectors": 10000,
+        "dimension": 512,
+        "queries": 1000,
+        "raw_vectors_mb": 19.531
+      },
+      "results": [
+        {
+          "kind": "numpy",
+          "status": "ok",
+          "describe": "numpy 精确检索",
+          "effective": {
+            "ntotal": 10000
+          },
+          "build_seconds": 0.013,
+          "index_mb": 19.531,
+          "bytes_per_vector": 2048.0,
+          "rss_delta_mb": 0.2,
+          "recall_at_k": 1.0,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 0.9999
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9999
+            }
+          ],
+          "qps_batch32": 2430.0,
+          "p50_ms": 0.176,
+          "p95_ms": 0.207,
+          "p99_ms": 0.311,
+          "mean_ms": 0.468,
+          "max_ms": 70.307,
+          "qps_single": 2137.7
+        },
+        {
+          "kind": "flat",
+          "status": "ok",
+          "describe": "faiss IndexFlatIP 精确检索",
+          "effective": {
+            "ntotal": 10000
+          },
+          "build_seconds": 0.004,
+          "index_mb": 19.531,
+          "bytes_per_vector": 2048.0,
+          "rss_delta_mb": 1.2,
+          "recall_at_k": 0.9999,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.9999
+            },
+            {
+              "candidates": 100,
+              "recall": 0.9999
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9999
+            }
+          ],
+          "qps_batch32": 2536.1,
+          "p50_ms": 1.077,
+          "p95_ms": 1.126,
+          "p99_ms": 1.251,
+          "mean_ms": 1.153,
+          "max_ms": 69.261,
+          "qps_single": 867.3
+        },
+        {
+          "kind": "hnsw",
+          "status": "ok",
+          "describe": "faiss HNSW(M=32, efC=200, efS=64)",
+          "effective": {
+            "m": 32,
+            "ef_construction": 200,
+            "ef_search": 64
+          },
+          "build_seconds": 1.095,
+          "index_mb": 22.123,
+          "bytes_per_vector": 2319.8,
+          "rss_delta_mb": 0.7,
+          "recall_at_k": 0.9994,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.9994
+            },
+            {
+              "candidates": 100,
+              "recall": 0.9995
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9995
+            }
+          ],
+          "qps_batch32": 18322.8,
+          "p50_ms": 0.149,
+          "p95_ms": 0.207,
+          "p99_ms": 0.246,
+          "mean_ms": 0.219,
+          "max_ms": 68.576,
+          "qps_single": 4571.7
+        },
+        {
+          "kind": "ivf",
+          "status": "ok",
+          "describe": "faiss IVF(nlist=256, nprobe=32)",
+          "effective": {
+            "nlist": 256,
+            "nprobe": 32,
+            "nlist_configured": 256
+          },
+          "build_seconds": 1.676,
+          "index_mb": 20.11,
+          "bytes_per_vector": 2108.6,
+          "rss_delta_mb": 33.2,
+          "recall_at_k": 0.9971,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.9971
+            },
+            {
+              "candidates": 100,
+              "recall": 0.9972
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9972
+            }
+          ],
+          "qps_batch32": 31601.7,
+          "p50_ms": 0.16,
+          "p95_ms": 0.245,
+          "p99_ms": 0.311,
+          "mean_ms": 0.244,
+          "max_ms": 76.313,
+          "qps_single": 4101.4
+        },
+        {
+          "kind": "ivfpq",
+          "status": "ok",
+          "describe": "faiss IVF-PQ(nlist=256, nprobe=32, M=64, nbits=8)",
+          "effective": {
+            "nlist": 256,
+            "nprobe": 32,
+            "nlist_configured": 256,
+            "pq_segments": 64,
+            "pq_bits": 8
+          },
+          "build_seconds": 13.979,
+          "index_mb": 1.689,
+          "bytes_per_vector": 177.1,
+          "rss_delta_mb": 2.4,
+          "recall_at_k": 0.753,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.753
+            },
+            {
+              "candidates": 100,
+              "recall": 0.9965
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9972
+            }
+          ],
+          "qps_batch32": 12721.6,
+          "p50_ms": 0.123,
+          "p95_ms": 0.141,
+          "p99_ms": 0.173,
+          "mean_ms": 0.208,
+          "max_ms": 84.414,
+          "qps_single": 4797.5
+        }
+      ]
+    },
+    {
+      "count": 90940,
+      "corpus": {
+        "source": "real-vectors",
+        "name": "vectors.npy",
+        "vectors": 90940,
+        "dimension": 512,
+        "queries": 1000,
+        "raw_vectors_mb": 177.617
+      },
+      "results": [
+        {
+          "kind": "numpy",
+          "status": "ok",
+          "describe": "numpy 精确检索",
+          "effective": {
+            "ntotal": 90940
+          },
+          "build_seconds": 0.097,
+          "index_mb": 177.617,
+          "bytes_per_vector": 2048.0,
+          "rss_delta_mb": 0.0,
+          "recall_at_k": 1.0,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 1.0
+            },
+            {
+              "candidates": 100,
+              "recall": 1.0
+            },
+            {
+              "candidates": 500,
+              "recall": 1.0
+            }
+          ],
+          "qps_batch32": 216.5,
+          "p50_ms": 1.793,
+          "p95_ms": 69.676,
+          "p99_ms": 71.912,
+          "mean_ms": 5.596,
+          "max_ms": 76.302,
+          "qps_single": 178.7
+        },
+        {
+          "kind": "flat",
+          "status": "ok",
+          "describe": "faiss IndexFlatIP 精确检索",
+          "effective": {
+            "ntotal": 90940
+          },
+          "build_seconds": 0.163,
+          "index_mb": 177.617,
+          "bytes_per_vector": 2048.0,
+          "rss_delta_mb": 177.5,
+          "recall_at_k": 0.9999,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.9999
+            },
+            {
+              "candidates": 100,
+              "recall": 0.9999
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9999
+            }
+          ],
+          "qps_batch32": 118.3,
+          "p50_ms": 9.747,
+          "p95_ms": 10.085,
+          "p99_ms": 10.31,
+          "mean_ms": 9.809,
+          "max_ms": 26.775,
+          "qps_single": 102.0
+        },
+        {
+          "kind": "hnsw",
+          "status": "ok",
+          "describe": "faiss HNSW(M=32, efC=200, efS=64)",
+          "effective": {
+            "m": 32,
+            "ef_construction": 200,
+            "ef_search": 64
+          },
+          "build_seconds": 36.704,
+          "index_mb": 201.224,
+          "bytes_per_vector": 2320.2,
+          "rss_delta_mb": 179.6,
+          "recall_at_k": 0.9996,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.9996
+            },
+            {
+              "candidates": 100,
+              "recall": 0.9996
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9996
+            }
+          ],
+          "qps_batch32": 2144.5,
+          "p50_ms": 0.329,
+          "p95_ms": 0.485,
+          "p99_ms": 0.583,
+          "mean_ms": 0.406,
+          "max_ms": 68.392,
+          "qps_single": 2460.9
+        },
+        {
+          "kind": "ivf",
+          "status": "ok",
+          "describe": "faiss IVF(nlist=1024, nprobe=32)",
+          "effective": {
+            "nlist": 1024,
+            "nprobe": 32,
+            "nlist_configured": 1024
+          },
+          "build_seconds": 25.234,
+          "index_mb": 180.319,
+          "bytes_per_vector": 2079.2,
+          "rss_delta_mb": 235.6,
+          "recall_at_k": 0.9983,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.9983
+            },
+            {
+              "candidates": 100,
+              "recall": 0.9983
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9983
+            }
+          ],
+          "qps_batch32": 663.0,
+          "p50_ms": 0.647,
+          "p95_ms": 0.837,
+          "p99_ms": 0.919,
+          "mean_ms": 0.731,
+          "max_ms": 77.158,
+          "qps_single": 1368.8
+        },
+        {
+          "kind": "ivfpq",
+          "status": "ok",
+          "describe": "faiss IVF-PQ(nlist=1024, nprobe=32, M=64, nbits=8)",
+          "effective": {
+            "nlist": 1024,
+            "nprobe": 32,
+            "nlist_configured": 1024,
+            "pq_segments": 64,
+            "pq_bits": 8
+          },
+          "build_seconds": 66.295,
+          "index_mb": 8.752,
+          "bytes_per_vector": 100.9,
+          "rss_delta_mb": -4.1,
+          "recall_at_k": 0.6841,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.6841
+            },
+            {
+              "candidates": 100,
+              "recall": 0.994
+            },
+            {
+              "candidates": 500,
+              "recall": 0.9984
+            }
+          ],
+          "qps_batch32": 7151.8,
+          "p50_ms": 0.254,
+          "p95_ms": 0.304,
+          "p99_ms": 0.327,
+          "mean_ms": 0.258,
+          "max_ms": 0.504,
+          "qps_single": 3880.5
+        }
+      ]
+    }
+  ]
+}
