@@ -42,9 +42,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from shopping_agent.ann_index import AnnIndex, AnnIndexConfig, faiss_available  # noqa: E402
 from shopping_agent.encoders import normalize  # noqa: E402
 from shopping_agent.faiss_retrieval import FaissRetriever  # noqa: E402
+from shopping_agent.indexing import load_catalog  # noqa: E402
 from shopping_agent.models import SearchRequest  # noqa: E402
 from shopping_agent.partitioned import PartitionedRetriever  # noqa: E402
 from shopping_agent.synthetic import (  # noqa: E402
+    SyntheticCorpus,
     SyntheticEncoder,
     generate_corpus,
     query_for,
@@ -143,6 +145,62 @@ def rerank_exact(vectors: np.ndarray, queries: np.ndarray, candidates: np.ndarra
         order = np.argsort(-scores, kind="stable")[:top_k]
         output[row, : order.size] = kept[order]
     return output
+
+
+def exact_neighbors(vectors: np.ndarray, queries: np.ndarray, top_k: int) -> np.ndarray:
+    """精确 top-k 真值。向量已 L2 归一化，所以矩阵内积就是余弦相似度。"""
+    scores = queries @ vectors.T
+    k = min(top_k, int(vectors.shape[0]))
+    if k <= 0:
+        return np.empty((queries.shape[0], 0), dtype=np.int64)
+    # argpartition 只保证"前 k 大都在这一批里"，不保证有序；要拿到真正的 top-k 顺序得再排一次。
+    coarse = np.argpartition(-scores, k - 1, axis=1)[:, :k]
+    rows = np.arange(scores.shape[0])[:, None]
+    order = np.argsort(-scores[rows, coarse], axis=1)
+    return np.asarray(coarse[rows, order], dtype=np.int64)
+
+
+def load_real_corpus(
+    vectors_path: Path, catalog_path: Path | None, count: int, args: argparse.Namespace
+) -> tuple[SyntheticCorpus, dict]:
+    """把外部真实向量装进与合成语料**完全相同**的容器——判据一致，结果才可比。
+
+    切分规则：语料取前缀 ``[:count]``，查询取紧接其后的 ``args.queries`` 条，两者不重叠。
+    真实商品向量自带强自相关，一旦让查询命中它自己，recall 会被抬到一个没有意义的高位；
+    这和仓库里批判过的"原图搜原图"是同一个坑。
+    """
+    raw = np.load(vectors_path)
+    if raw.ndim != 2:
+        raise ValueError(f"向量文件应为二维 (N, D)，实际是 {raw.shape}")
+    vectors = normalize(np.asarray(raw, dtype=np.float32))
+    needed = count + args.queries
+    if vectors.shape[0] < needed:
+        raise ValueError(
+            f"向量文件只有 {vectors.shape[0]} 条，切不出 {count} 条语料 + {args.queries} 条查询"
+            f"（需要 {needed} 条）。导出时多留查询余量，或调小 --scales / --queries"
+        )
+    corpus_vectors = vectors[:count]
+    query_vectors = vectors[count:needed]
+    ground_truth = exact_neighbors(corpus_vectors, query_vectors, args.top_k)
+    products = load_catalog(catalog_path)[:count] if catalog_path is not None else []
+    corpus = SyntheticCorpus(
+        vectors=corpus_vectors,
+        queries=query_vectors,
+        ground_truth=ground_truth,
+        products=products,
+        seed=args.seed,
+        clusters=0,
+        spread=0.0,
+    )
+    summary = {
+        "source": "real-vectors",
+        "name": vectors_path.name,
+        "vectors": int(corpus_vectors.shape[0]),
+        "dimension": int(corpus_vectors.shape[1]),
+        "queries": int(query_vectors.shape[0]),
+        "raw_vectors_mb": round(corpus_vectors.nbytes / (1024 * 1024), 3),
+    }
+    return corpus, summary
 
 
 def benchmark_index(kind: str, corpus, args: argparse.Namespace) -> dict:
@@ -331,15 +389,28 @@ def benchmark_retriever(corpus, catalog_path: Path, args: argparse.Namespace) ->
 
 
 def render_markdown(payload: dict) -> str:
+    config = payload["config"]
+    if config.get("corpus") == "real":
+        dimension = (
+            payload["scales"][0]["corpus"]["dimension"] if payload["scales"] else config["dimension"]
+        )
+        corpus_line = (
+            f"- 语料：**真实向量**（{config.get('corpus_name', 'vectors.npy')}，{dimension} 维；"
+            f"{config['queries']} 条查询从向量文件末尾切出，与语料不重叠）"
+        )
+    else:
+        corpus_line = (
+            f"- 语料：合成语料，{config['dimension']} 维、{config['clusters']} 个簇、"
+            f"spread={config['spread']}、seed={config['seed']}"
+        )
     lines = [
         "# ANN 规模化压测结果",
         "",
         f"- 生成时间：{payload['generated_at']}",
         f"- 环境：Python {payload['environment']['python']}｜numpy {payload['environment']['numpy']}"
         f"｜faiss {payload['environment']['faiss']}｜{payload['environment']['platform']}",
-        f"- 语料：{payload['config']['dimension']} 维、{payload['config']['clusters']} 个簇、"
-        f"spread={payload['config']['spread']}、seed={payload['config']['seed']}",
-        f"- 查询：{payload['config']['queries']} 条/规模，recall@{payload['config']['top_k']}",
+        corpus_line,
+        f"- 查询：{config['queries']} 条/规模，recall@{config['top_k']}",
         "",
         "## 索引层",
         "",
@@ -500,6 +571,19 @@ def main() -> None:
         "这个操作点会明显影响分段的效果，粒度扫描见 scripts/benchmark_partition_tradeoff.py",
     )
     parser.add_argument("--skip-retriever", action="store_true", help="只压索引层，跳过端到端点名与过滤压力")
+    parser.add_argument(
+        "--vectors",
+        default=None,
+        help="外部真实向量 .npy（N×D，如 Chinese-CLIP 导出的商品向量）。给了它就不再生成合成语料，"
+        "改用真实 embedding 分布压测——这是验证「合成语料的簇结构假设是否成立」的唯一方式",
+    )
+    parser.add_argument("--vectors-catalog", default=None, help="与 --vectors 逐行对齐的商品目录 jsonl（可选）")
+    parser.add_argument(
+        "--vectors-query-count",
+        type=int,
+        default=0,
+        help="从向量文件末尾切多少条做查询；默认与 --queries 相同。查询段与语料段不重叠",
+    )
     parser.add_argument("--output-dir", default="results")
     args = parser.parse_args()
 
@@ -509,6 +593,18 @@ def main() -> None:
     scales = [int(item) for item in args.scales.split(",") if item.strip()]
     output_dir = (ROOT / args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    real_vectors = Path(args.vectors).resolve() if args.vectors else None
+    real_catalog = Path(args.vectors_catalog).resolve() if args.vectors_catalog else None
+    if real_vectors is not None and not real_vectors.exists():
+        raise SystemExit(f"--vectors 指向的文件不存在：{real_vectors}")
+    if args.vectors_query_count:
+        args.queries = args.vectors_query_count
+    if real_vectors is not None and not args.skip_retriever:
+        # 检索层探针靠 SyntheticEncoder 的商品 token 定位答案，真实向量没有这套 token，
+        # 硬跑只会得到一堆"点名 top1 = 0"的伪失败。真实模式只压索引层。
+        print("提示：--vectors 模式自动跳过检索层（探针依赖合成 token），只压索引层")
+        args.skip_retriever = True
 
     faiss_ok = faiss_available()
     if not faiss_ok:
@@ -525,6 +621,8 @@ def main() -> None:
         },
         "config": {
             "scales": scales,
+            "corpus": "real" if real_vectors is not None else "synthetic",
+            "corpus_name": real_vectors.name if real_vectors is not None else "",
             "dimension": args.dimension,
             "queries": args.queries,
             "top_k": args.top_k,
@@ -546,17 +644,21 @@ def main() -> None:
 
     for count in scales:
         print(f"\n=== 规模 {count:,} ===")
-        corpus = generate_corpus(
-            count=count,
-            dimension=args.dimension,
-            queries=args.queries,
-            top_k=args.top_k,
-            clusters=min(args.clusters, max(1, count)),
-            spread=args.spread,
-            seed=args.seed,
-        )
-        print(f"  语料：{corpus.summarize()}")
-        entry: dict[str, object] = {"count": count, "corpus": corpus.summarize(), "results": []}
+        if real_vectors is not None:
+            corpus, corpus_summary = load_real_corpus(real_vectors, real_catalog, count, args)
+        else:
+            corpus = generate_corpus(
+                count=count,
+                dimension=args.dimension,
+                queries=args.queries,
+                top_k=args.top_k,
+                clusters=min(args.clusters, max(1, count)),
+                spread=args.spread,
+                seed=args.seed,
+            )
+            corpus_summary = corpus.summarize()
+        print(f"  语料：{corpus_summary}")
+        entry: dict[str, object] = {"count": count, "corpus": corpus_summary, "results": []}
         for kind in active_kinds:
             result = benchmark_index(kind, corpus, args)
             entry["results"].append(result)  # type: ignore[union-attr]
