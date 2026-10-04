@@ -119,13 +119,21 @@ def _anchor_tokens(text: str) -> tuple[set[str], set[str]]:
     return words, digits
 
 
-def looks_mismatched(product, query: str) -> bool:
-    """查询里出现不属于该商品的数字或英文锚点 → 疑似错位。"""
+def looks_mismatched(product, query: str, batch_anchors: set[str] | None = None) -> bool:
+    """查询里出现不属于该商品的数字或英文锚点 → 疑似错位。
+
+    batch_anchors 为整批商品的锚点并集：LLM 自创的泛化词（如标题没写 LED 但查询
+    写了"LED灯"）不命中任何商品锚点，属于合理润色，放行；只有命中**其他**商品
+    的锚点才算串位证据，避免误杀导致个别商品重试耗尽。"""
     query_words, query_digits = _anchor_tokens(query)
     product_words, product_digits = _anchor_tokens(product.title + " " + getattr(product, "description", ""))
     foreign_digits = query_digits - product_digits
     foreign_words = (query_words - product_words) - _GENERIC_WORDS
-    return bool(foreign_digits or foreign_words)
+    if not (foreign_digits or foreign_words):
+        return False
+    if batch_anchors is None:
+        return True  # 无批次信息时保守判定（单测沿用旧语义）
+    return bool((foreign_digits | foreign_words) & batch_anchors)
 
 
 def call_ollama(model: str, prompt: str, timeout: int = 180) -> dict:
@@ -165,7 +173,7 @@ def parse_queries(data: dict, expected: int) -> dict[int, str]:
     return result
 
 
-def generate_batch(model: str, products: list, persona: dict, retries: int = 3) -> list[str]:
+def generate_batch(model: str, products: list, persona: dict, retries: int = 5) -> list[str]:
     """一批商品的查询生成。LLM 偶发漏 index 或静默错位——都进入 pending 单独补一轮。"""
     queries: dict[int, str] = {}
     pending = list(range(len(products)))
@@ -175,6 +183,11 @@ def generate_batch(model: str, products: list, persona: dict, retries: int = 3) 
             break
         subset = [products[i] for i in pending]
         prompt = build_prompt(subset, persona)
+        # 整批锚点并集：只有命中其他商品锚点的查询才算串位证据
+        batch_anchors: set[str] = set()
+        for item in subset:
+            words, digits = _anchor_tokens(item.title + " " + getattr(item, "description", ""))
+            batch_anchors |= words | digits
         try:
             got = parse_queries(call_ollama(model, prompt), len(subset))
         except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
@@ -183,14 +196,15 @@ def generate_batch(model: str, products: list, persona: dict, retries: int = 3) 
             continue
         for local_index, query in got.items():
             full = pending[local_index]
-            if looks_mismatched(subset[local_index], query):  # 静默错位：不采用，留待补生成
+            if looks_mismatched(subset[local_index], query, batch_anchors):  # 静默错位：不采用，留待补生成
                 continue
             queries[full] = query
         pending = [i for i in pending if i not in queries]
         if pending:
             time.sleep(1)
     if pending:
-        raise RuntimeError(f"以下商品重试 {retries} 轮后仍未生成：{last_error}")
+        stuck = "；".join(f"[{i}]{products[i].title[:40]}" for i in pending)
+        raise RuntimeError(f"以下商品重试 {retries} 轮后仍未生成（{last_error}）：{stuck}")
     return [queries[i] for i in range(len(products))]
 
 
