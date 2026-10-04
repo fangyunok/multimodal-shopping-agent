@@ -72,6 +72,25 @@ def test_looks_mismatched_flags_foreign_anchors() -> None:
     assert not query_set.looks_mismatched(glass, "玻璃酒杯")  # 无锚点 → 无法判错，放行
 
 
+# ---------- parse_queries：鲁棒性 ----------
+
+
+def test_parse_queries_skips_non_dict_items() -> None:
+    """小模型偶发把 queries 写成 [0, 1, 2] 纯数字数组——跳过非 dict 项（不报 AttributeError），
+    覆盖不全时按设计抛 ValueError，由 generate_batch 的补齐逻辑重试。"""
+    with pytest.raises(ValueError):
+        query_set.parse_queries({"queries": [0, 1, {"index": 2, "query": "红色连衣裙"}]}, 3)
+    # 覆盖完整时正常抽取
+    assert query_set.parse_queries(
+        {"queries": [0, {"index": 1, "query": "a"}, {"index": 0, "query": "b"}]}, 2
+    ) == {0: "b", 1: "a"}
+
+
+def test_parse_queries_rejects_incomplete_coverage() -> None:
+    with pytest.raises(ValueError):
+        query_set.parse_queries({"queries": [{"index": 0, "query": "a"}]}, 3)
+
+
 # ---------- benchmark：apply_external_queries 装配 ----------
 
 def make_args(**overrides) -> argparse.Namespace:

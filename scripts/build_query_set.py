@@ -155,6 +155,8 @@ def parse_queries(data: dict, expected: int) -> dict[int, str]:
         raise ValueError(f"返回缺少 queries 数组：{str(data)[:200]}")
     result: dict[int, str] = {}
     for item in queries:
+        if not isinstance(item, dict):  # 小模型偶发把数组写成 [0,1,2] 这类纯数字，跳过由补齐逻辑兜底
+            continue
         index, query = item.get("index"), item.get("query", "")
         if isinstance(index, int) and 0 <= index < expected and isinstance(query, str) and query.strip():
             result[index] = query.strip()
