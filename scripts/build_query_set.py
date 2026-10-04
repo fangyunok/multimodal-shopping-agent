@@ -143,7 +143,10 @@ def call_ollama(model: str, prompt: str, timeout: int = 180) -> dict:
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.7},
+        # qwen3 这类思考模型默认开 thinking，token 预算被思考链吃掉会截断 JSON
+        # （症状：每轮恰好缺最后一条）；显式关闭并给足输出长度
+        "think": False,
+        "options": {"temperature": 0.7, "num_predict": 4096},
     }
     request = urllib.request.Request(
         OLLAMA_URL,
