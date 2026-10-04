@@ -115,7 +115,38 @@ def test_hnsw_cannot_return_full_neighbour_set_beyond_ef() -> None:
     assert (indices[0] < 0).any(), "HNSW 在 k=全库规模时仍然会漏，这不是 bug 而是它的性质"
 
 
+def test_missing_faiss_gives_actionable_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """faiss 缺失时必须给可执行的安装提示，而不是甩一个 ImportError 堆栈。
+
+    这是"faiss 是可选依赖"这个承诺的实现细节：无论当前环境装没装 faiss，
+    都要能验证这条降级路径，所以这里临时把 import 拦住。
+    """
+    import builtins
+    import sys
+
+    from shopping_agent import ann_index as module
+
+    real_import = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name == "faiss" or name.startswith("faiss."):
+            raise ImportError("simulated missing faiss")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    monkeypatch.delitem(sys.modules, "faiss", raising=False)
+    with pytest.raises(RuntimeError, match="pip install"):
+        module.faiss_module()
+    assert module.faiss_available() is False
+
+
+@requires_faiss
 def test_ivfpq_rejects_insufficient_training_data() -> None:
+    """样本不足时显式拒绝，而不是跑出一个被低估的假分数。
+
+    注意这条断言依赖 faiss 的存在：没有 faiss 时 `AnnIndex.build` 会先因为
+    缺少依赖而抛 RuntimeError，那条路径由 `test_missing_faiss_gives_actionable_hint` 覆盖。
+    """
     vectors, _ = sample(dimension=32, count=500)
     with pytest.raises(ValueError) as error:
         AnnIndex.build(vectors, AnnIndexConfig(kind="ivfpq", dimension=32))
