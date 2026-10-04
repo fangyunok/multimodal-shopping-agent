@@ -484,6 +484,7 @@ tests/                        单元与接口测试
 - Agent 端到端 P50/P95 延迟基准的自动化产出
 - 接入真实 LLM 决策器（实现 `Reasoner.decide()`），并用 LLM 步数分布校准当前基线
 - MCP：streamable-http 并发容量实测
+- 规模化：真实 CLIP 向量上的同口径压测（GPU 一键流程与口径说明见 [docs/REAL_CLIP_BENCHMARK.md](docs/REAL_CLIP_BENCHMARK.md)）
 - 规模化：百万级语料与多副本并发的实测（需要 ≥16 GB 内存 / 多机）；分段的动态调整（按查询分布自动选分段边界，而不是按分位数静态切）
 
 ## 算力规划
