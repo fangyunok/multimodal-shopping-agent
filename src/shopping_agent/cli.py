@@ -7,13 +7,20 @@ from pathlib import Path
 
 from .agent import ShoppingAgent
 from .abo import build_cross_view_benchmark, convert_abo, fetch_abo_subset_images
+from .ann_index import AnnIndexConfig
 from .benchmark import evaluate_cases, generate_attribute_cases, read_benchmark, write_benchmark
 from .encoders import ChineseClipEncoder
 from .dataset import prepare_dataset
 from .evaluation import evaluate
+from .faiss_retrieval import FaissRetriever
 from .fusion_retrieval import ScoreFusionRetriever
+from .incremental import (
+    IndexVersionManager,
+    build_incremental_version,
+    load_changes,
+)
 from .llm_planner import LLMPlanner
-from .indexing import build_index
+from .indexing import build_ann_index, build_index
 from .models import AgentRequest
 from .planner import RulePlanner
 from .planner_evaluation import evaluate_planner
@@ -49,6 +56,85 @@ def run_chat(agent: ReActAgent) -> None:
     print("会话结束。")
 
 
+def ann_config_from(args) -> AnnIndexConfig:
+    """把 CLI 参数收成一个索引配置。
+
+    维度只是占位：``build_ann_index`` 会以**真实向量维度**为准覆盖它，
+    因为维度由编码器决定，而不是用户可以选的东西。
+    """
+    return AnnIndexConfig(
+        kind=args.ann_kind,
+        dimension=args.ann_dimension,
+        m=args.ann_m,
+        ef_construction=args.ann_ef_construction,
+        ef_search=args.ann_ef_search,
+        nlist=args.ann_nlist,
+        nprobe=args.ann_nprobe,
+        pq_segments=args.ann_pq_segments,
+        pq_bits=args.ann_pq_bits,
+    )
+
+
+def handle_index_versioning(args) -> bool:
+    """索引版本管理：建版本 → 校验 → 发布 → 回滚 → 清理。返回 True 表示已处理完。"""
+    manager = IndexVersionManager(args.index_root)
+    if args.index_status:
+        print(json.dumps(manager.status(), ensure_ascii=False, indent=2))
+        return True
+    if args.rollback_index:
+        target = manager.rollback()
+        print(json.dumps({"rolled_back_to": target, **manager.status()}, ensure_ascii=False, indent=2))
+        return True
+    if args.promote_version:
+        directory = manager.promote(args.promote_version)
+        print(json.dumps({"promoted": args.promote_version, "directory": str(directory)}, ensure_ascii=False, indent=2))
+        return True
+    if args.prune_versions is not None:
+        removed = manager.prune(args.prune_versions)
+        print(json.dumps({"removed": removed, **manager.status()}, ensure_ascii=False, indent=2))
+        return True
+    return False
+
+
+def handle_incremental(args) -> bool:
+    """增量更新：基于当前版本 + 变更日志产出新版本，可选立刻发布。"""
+    if not args.apply_changes:
+        return False
+    manager = IndexVersionManager(args.index_root)
+    changes = load_changes(args.apply_changes)
+    if args.from_current:
+        base = manager.current_dir()
+    elif args.base_version_dir:
+        base = Path(args.base_version_dir).resolve()
+    else:
+        raise SystemExit("增量更新需要 --from-current 或 --base-version-dir 指定基线版本")
+    version = manager.next_version()
+    target = manager.version_dir(version)
+    encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
+    manifest, stats = build_incremental_version(
+        base,
+        args.catalog,
+        target,
+        changes,
+        encoder,
+        config=ann_config_from(args),
+        model_name=args.model_id,
+        image_weight=args.image_weight,
+    )
+    summary = {
+        "version": version,
+        "directory": str(target),
+        "products": manifest.product_count,
+        "index_type": manifest.index_type,
+        **stats,
+    }
+    if args.publish:
+        manager.promote(version)
+        summary["published"] = True
+    print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
+    return True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run or evaluate the shopping agent")
     parser.add_argument("--catalog", default="data/products.jsonl")
@@ -62,9 +148,32 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--image-weight", type=float, default=0.5)
-    parser.add_argument("--retriever-backend", choices=("baseline", "clip", "fusion"), default="baseline")
+    parser.add_argument("--retriever-backend", choices=("baseline", "clip", "fusion", "ann"), default="baseline")
     parser.add_argument("--lexical-weight", type=float, default=0.65)
     parser.add_argument("--index-dir")
+    parser.add_argument("--build-ann-index", metavar="DIRECTORY", help="按 --ann-* 参数构建指定类型的 ANN 索引")
+    parser.add_argument(
+        "--ann-kind", choices=("numpy", "flat", "hnsw", "ivf", "ivfpq"), default="hnsw", help="ANN 后端类型"
+    )
+    parser.add_argument("--ann-dimension", type=int, default=512, help="占位维度，构建时会以真实向量维度覆盖")
+    parser.add_argument("--ann-m", type=int, default=32, help="HNSW 连接度")
+    parser.add_argument("--ann-ef-construction", type=int, default=200, help="HNSW 建图宽度")
+    parser.add_argument("--ann-ef-search", type=int, default=64, help="HNSW 查询宽度（可直接调，无需重建）")
+    parser.add_argument("--ann-nlist", type=int, default=1024, help="IVF 桶数（数据量小时会自动收缩）")
+    parser.add_argument("--ann-nprobe", type=int, default=32, help="IVF 查询扫描桶数")
+    parser.add_argument("--ann-pq-segments", type=int, default=None, help="PQ 子空间数，默认按维度自动选择")
+    parser.add_argument("--ann-pq-bits", type=int, default=8, help="PQ 每段编码位数")
+    parser.add_argument("--no-vectors", action="store_true", help="不落盘 vectors.npy（省磁盘，但失去精确兜底）")
+    parser.add_argument("--catalog-snapshot", action="store_true", help="把商品目录快照写进索引目录（版本自证）")
+    parser.add_argument("--index-root", default="data/index", help="索引版本根目录")
+    parser.add_argument("--index-status", action="store_true", help="查看当前索引版本状态")
+    parser.add_argument("--promote-version", type=int, help="原子发布指定版本")
+    parser.add_argument("--rollback-index", action="store_true", help="回滚到上一个索引版本")
+    parser.add_argument("--prune-versions", type=int, metavar="KEEP", help="清理旧版本，保留 KEEP 个")
+    parser.add_argument("--apply-changes", metavar="CHANGES_JSONL", help="增量应用的变更日志")
+    parser.add_argument("--from-current", action="store_true", help="以当前发布版本为增量基线")
+    parser.add_argument("--base-version-dir", help="增量基线版本目录")
+    parser.add_argument("--publish", action="store_true", help="增量建完后立即发布")
     parser.add_argument("--planner-backend", choices=("rule", "llm"), default="rule")
     parser.add_argument("--llm-base-url", default=os.getenv("LLM_BASE_URL"))
     parser.add_argument("--llm-model", default=os.getenv("LLM_MODEL"))
@@ -87,6 +196,8 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=6, help="ReAct 单轮最大步数")
     parser.add_argument("--context-budget", type=int, default=2048, help="会话上下文 token 预算上限")
     args = parser.parse_args()
+    if handle_index_versioning(args) or handle_incremental(args):
+        return
     if args.build_cross_view_benchmark:
         summary = build_cross_view_benchmark(args.build_cross_view_benchmark, args.catalog, args.cross_view_output)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -111,7 +222,29 @@ def main() -> None:
         manifest = build_index(args.catalog, args.build_index, encoder, args.model_id, args.image_weight)
         print(manifest.model_dump_json(indent=2))
         return
-    if args.retriever_backend in {"clip", "fusion"}:
+    if args.build_ann_index:
+        encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
+        manifest, ann = build_ann_index(
+            args.catalog,
+            args.build_ann_index,
+            encoder,
+            args.model_id,
+            ann_config_from(args),
+            image_weight=args.image_weight,
+            keep_vectors=not args.no_vectors,
+            catalog_snapshot=args.catalog_snapshot,
+        )
+        print(manifest.model_dump_json(indent=2))
+        print(json.dumps(ann.summary(), ensure_ascii=False, indent=2))
+        return
+    if args.retriever_backend == "ann":
+        if not args.index_dir:
+            parser.error("--retriever-backend ann 需要 --index-dir")
+        encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
+        retriever = FaissRetriever.from_index(
+            args.catalog, args.index_dir, encoder, args.model_id, ann_config_from(args)
+        )
+    elif args.retriever_backend in {"clip", "fusion"}:
         encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
         semantic = (
             SemanticRetriever.from_index(args.catalog, args.index_dir, encoder, args.model_id)
