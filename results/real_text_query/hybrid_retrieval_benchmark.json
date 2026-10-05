@@ -1,6 +1,6 @@
 {
   "config": {
-    "generated_at": "2026-10-05T07:14:48.558598+00:00",
+    "generated_at": "2026-10-05T07:25:07.463612+00:00",
     "corpus": 5477,
     "corpus_name": "corpus_with_truth.npy",
     "dimension": 512,
@@ -14,7 +14,7 @@
     "bm25_weight": 1.0,
     "bm25_k1": 1.5,
     "bm25_b": 0.75,
-    "bm25_build_seconds": 1.089,
+    "bm25_build_seconds": 1.004,
     "bm25_summary": {
       "count": 5477,
       "vocabulary_size": 32267,
@@ -83,13 +83,13 @@
       "hit@10_category": 0.962,
       "mrr": 0.4853,
       "ndcg@10": 0.5295,
-      "latency_p50_ms": 2.105,
-      "latency_p95_ms": 2.934,
-      "latency_mean_ms": 2.211,
+      "latency_p50_ms": 1.809,
+      "latency_p95_ms": 2.376,
+      "latency_mean_ms": 1.913,
       "last_stats": {
         "mode": "dense_exact",
         "candidates": 100,
-        "query_ms": 0.938
+        "query_ms": 0.86
       },
       "candidate_window": 100,
       "candidate_recall": 0.868
@@ -101,9 +101,9 @@
       "hit@10_category": 0.816,
       "mrr": 0.3211,
       "ndcg@10": 0.3862,
-      "latency_p50_ms": 2.4,
-      "latency_p95_ms": 3.56,
-      "latency_mean_ms": 2.399,
+      "latency_p50_ms": 1.72,
+      "latency_p95_ms": 2.394,
+      "latency_mean_ms": 1.779,
       "last_stats": {
         "mode": "bm25",
         "candidates": 100,
@@ -120,9 +120,9 @@
       "hit@10_category": 0.958,
       "mrr": 0.5545,
       "ndcg@10": 0.606,
-      "latency_p50_ms": 15.415,
-      "latency_p95_ms": 21.174,
-      "latency_mean_ms": 16.719,
+      "latency_p50_ms": 14.262,
+      "latency_p95_ms": 15.464,
+      "latency_mean_ms": 14.65,
       "last_stats": {
         "mode": "rrf",
         "rrf_k": 60,
@@ -145,9 +145,9 @@
       "hit@10_category": 0.986,
       "mrr": 0.7669,
       "ndcg@10": 0.8034,
-      "latency_p50_ms": 15.485,
-      "latency_p95_ms": 19.555,
-      "latency_mean_ms": 16.115,
+      "latency_p50_ms": 15.193,
+      "latency_p95_ms": 16.951,
+      "latency_mean_ms": 15.59,
       "last_stats": {
         "rerank": "cross-encoder",
         "reranked": 100,

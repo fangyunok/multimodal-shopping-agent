@@ -179,6 +179,7 @@ def test_sweep_candidate_window_reports_monotonic_ceiling() -> None:
     )
 
     assert [row["window"] for row in swept] == [5, 10, 20, 40]
+    # 键名里嵌 f-string 需要 Python 3.12+（PEP 701），CI 跑 3.11，所以先算出来再用。
     ceilings = [row[f"candidate_recall@{row['window']}"] for row in swept]
     assert ceilings == sorted(ceilings), f"候选召回非单调：{ceilings}"
     for row in swept:

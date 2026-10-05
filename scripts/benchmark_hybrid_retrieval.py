@@ -563,9 +563,11 @@ def render_markdown(report: dict[str, object]) -> str:
             "|---|---|---|",
         ]
         for row in sweep:
-            lines.append(
-                f"| {row['window']} | {row[f'hit@{top_k}']:.4f} | {row[f'candidate_recall@{row['window']}']:.4f} |"
-            )
+            # 键名里嵌 f-string 在 Python 3.12+ 才合法（PEP 701），而 CI 跑 3.11——
+            # 嵌套引号必须先算出来，否则本地（3.13）全绿、CI 语法错误。
+            window = row["window"]
+            recall_key = f"candidate_recall@{window}"
+            lines.append(f"| {window} | {row[f'hit@{top_k}']:.4f} | {row[recall_key]:.4f} |")
         lines += [
             "",
             "融合策略的 hit@k **不是策略本身的固定属性**，它随粗排窗口变化：窗口太窄时融合只能看到各路前几名，",
@@ -808,9 +810,10 @@ def main() -> None:
         windows = [int(value) for value in args.sweep_windows.split(",") if value.strip()]
         window_sweep = sweep_candidate_window(rrf, encoder, queries, windows, args.top_k)
         for row in window_sweep:
+            recall_key = f"candidate_recall@{row['window']}"
             print(
                 f"  window={row['window']:<4d} hit@{args.top_k}={row[f'hit@{args.top_k}']:.4f} "
-                f"cand_recall={row[f'candidate_recall@{row['window']}']:.4f}"
+                f"cand_recall={row[recall_key]:.4f}"
             )
 
     report = {
