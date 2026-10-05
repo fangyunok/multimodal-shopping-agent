@@ -236,6 +236,9 @@ def main() -> None:
     parser.add_argument("--device", default="cpu", help="查询编码设备（cpu 即够，量小）")
     parser.add_argument("--seed", type=int, default=20261004)
     parser.add_argument("--limit", type=int, default=0, help="只生成前 N 条（冒烟用）；0 表示全部")
+    parser.add_argument(
+        "--regenerate", action="store_true", help="忽略已落盘的 queries.jsonl，从头重新生成（默认续跑）"
+    )
     args = parser.parse_args()
 
     OLLAMA_URL = args.ollama_url
@@ -260,36 +263,48 @@ def main() -> None:
     sampled = interleaved
     print(f"抽样 {len(sampled)} 条（池：前 {args.pool} 条中 {len(pool)} 条有标题，按类目轮转防扎堆）")
 
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = output_dir / "queries.jsonl"
+
+    # 生成阶段每批追加落盘：LLM 生成动辄 1~2 小时，编码阶段失败不该让文本体力劳动归零。
+    # 文件已存在时默认续跑（只补未完成的商品），--regenerate 才从头重生成。
     rows: list[dict] = []
-    start = time.perf_counter()
-    for offset in range(0, len(sampled), args.batch):
-        batch = sampled[offset : offset + args.batch]
-        persona = PERSONAS[(offset // args.batch) % len(PERSONAS)]
-        queries = generate_batch(args.ollama_model, batch, persona)
-        for product, query in zip(batch, queries):
-            rows.append(
-                {
+    mode = "w"
+    if jsonl_path.exists() and not args.regenerate:
+        rows = [json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        mode = "a"
+        print(f"复用已生成的 {len(rows)} 条查询（{jsonl_path}），只补未完成的商品")
+
+    with jsonl_path.open(mode, encoding="utf-8") as stream:
+        start = time.perf_counter()
+        done_titles = {row["source_title"] for row in rows}
+        todo = [p for p in sampled if p.title not in done_titles]
+        for offset in range(0, len(todo), args.batch):
+            batch = todo[offset : offset + args.batch]
+            persona = PERSONAS[(offset // args.batch) % len(PERSONAS)]
+            queries = generate_batch(args.ollama_model, batch, persona)
+            for product, query in zip(batch, queries):
+                row = {
                     "product_id": product.id,
                     "query": query,
                     "persona": persona["id"],
                     "source_title": product.title,
                 }
-            )
-        done = min(offset + args.batch, len(sampled))
-        print(f"  {done}/{len(sampled)} 条已生成（{time.perf_counter() - start:.0f}s）")
+                rows.append(row)
+                stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+            stream.flush()  # 立刻落盘，进程被杀也不丢已完成批次
+            done = min(offset + args.batch, len(todo))
+            print(f"  {len(rows)}/{len(sampled)} 条已生成（{time.perf_counter() - start:.0f}s）", flush=True)
 
     print(f"查询生成完成：{len(rows)} 条，开始编码（device={args.device}，纯文本向量）")
+
     encoder = ChineseClipEncoder(device=args.device, batch_size=32)
     encode_start = time.perf_counter()
     vectors = normalize(encoder.encode_texts([row["query"] for row in rows]))
     encode_seconds = time.perf_counter() - encode_start
 
-    output_dir = Path(args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     np.save(output_dir / "queries.npy", np.asarray(vectors, dtype=np.float32))
-    with (output_dir / "queries.jsonl").open("w", encoding="utf-8") as stream:
-        for row in rows:
-            stream.write(json.dumps(row, ensure_ascii=False) + "\n")
     meta = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "queries": len(rows),
