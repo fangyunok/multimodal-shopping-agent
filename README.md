@@ -473,7 +473,7 @@ tests/                        单元与接口测试
 - LLM Planner 工程版：Schema 约束、20 条开发集、100 条锁定测试集和成本统计
 - M6 MCP Server：tools / resources / prompts 三类能力、stdio 与 SSE / streamable-http 三种传输、超时重试幂等与并发闸门、逐工具延迟指标、双口径压测脚本
 - M7 多轮运行期：跨轮会话记忆与槽位继承、token 预算下的上下文压缩（四阶段、硬边界）、ReAct 多步循环（观察回注 / 循环检测 / 预算感知）、MCP `react_query` 会话化与重放冲突处理
-- M8 规模化（索引层）：五种后端统一契约、索引清单 v2、自适应超采样与精确兜底、粗召回 + 精确重排（`rerank_candidates`）、过滤下推的分段索引路由（`partitioned.py`）、合成语料与精确真值、跨四个量级的索引/端到端/过滤压力压测；Chinese-CLIP 真实商品向量（91,940 条 ABO 全量）同口径复核（[REAL_CLIP_BENCHMARK.md](docs/REAL_CLIP_BENCHMARK.md)）
+- M8 规模化（索引层）：五种后端统一契约、索引清单 v2、自适应超采样与精确兜底、粗召回 + 精确重排（`rerank_candidates`）、过滤下推的分段索引路由（`partitioned.py`）、合成语料与精确真值、跨四个量级的索引/端到端/过滤压力压测；Chinese-CLIP 真实商品向量（91,940 条 ABO 全量）同口径复核（[REAL_CLIP_BENCHMARK.md](docs/REAL_CLIP_BENCHMARK.md)）；**真实文本查询评测集（LLM 按商品事实生成中文查询 + 原商品真值）与分布 gap 量化——hit@10 0.668 vs 同分布切片 0.998，并据此确认瓶颈在表达对齐而非检索结构**（[QUERY_DISTRIBUTION.md](docs/QUERY_DISTRIBUTION.md)）
 - M8 规模化（服务层）：会话外置（内存 / Redis）、Lua 原子 CAS 与冲突可见、存活/就绪探针分离、`/chat` 无状态会话接口
 - M8 规模化（编码与版本层）：编码服务 HTTP 化（动态批处理 + 两级缓存）、索引版本目录与原子发布/回滚、增量更新与压实
 
@@ -484,6 +484,8 @@ tests/                        单元与接口测试
 - Agent 端到端 P50/P95 延迟基准的自动化产出
 - 接入真实 LLM 决策器（实现 `Reasoner.decide()`），并用 LLM 步数分布校准当前基线
 - MCP：streamable-http 并发容量实测
+- 检索质量：混合检索（BM25 + 向量 RRF 融合）与 cross-encoder 重排（bge-reranker）——针对 QUERY_DISTRIBUTION.md 量化的 33pt 表达 gap
+- 评测口径：多真值标注（category + 价格区间口径的等价商品集合）与跨语言查询集（英文查询对照），评测脚本已支持 `--queries-catalog` 换标注文件
 - 规模化：过滤下推与分段在真实向量上的复跑（真实向量 + 商品目录已就绪，见 [docs/REAL_CLIP_BENCHMARK.md](docs/REAL_CLIP_BENCHMARK.md)）
 - 规模化：百万级语料与多副本并发的实测（需要 ≥16 GB 内存 / 多机）；分段的动态调整（按查询分布自动选分段边界，而不是按分位数静态切）
 

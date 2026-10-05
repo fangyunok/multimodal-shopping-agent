@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-10-05T03:43:51.873279+00:00",
+  "queries": 500,
+  "dimension": 512,
+  "pool": 90000,
+  "catalog": "C:\\Users\\FANGJIALI\\WorkBuddy\\2026-10-04-10-47-22\\real_clip_results\\data\\processed\\products.jsonl",
+  "llm_model": "qwen3:4b-instruct",
+  "clip_model": "OFA-Sys/chinese-clip-vit-base-patch16",
+  "encode_mode": "text-only（与线上查询端口径一致）",
+  "encode_seconds": 18.19,
+  "seed": 42,
+  "personas": [
+    "keywords",
+    "colloquial",
+    "need",
+    "budget"
+  ],
+  "environment": {
+    "python": "3.13.14",
+    "platform": "Windows AMD64"
+  }
+}

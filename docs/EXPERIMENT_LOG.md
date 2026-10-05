@@ -375,3 +375,39 @@ python scripts/benchmark_ann_scaling.py --vectors outputs/real_clip/vectors_fp16
 ```
 
 产物：`results/real_clip/vectors_fp16.meta.json`、`results/real_clip/ann_scaling_benchmark_fp16_10k.{json,md}`。
+
+## 2026-10-05：真实文本查询评测集与分布 gap 量化（5000 档本机复现）
+
+### 做了什么
+
+给 `benchmark_ann_scaling.py` 加 `--queries-file / --queries-catalog`，把外部文本查询装进同一语料容器
+（真值 = 生成它的原商品，保留在语料内，recall 自动退化为 hit@k）；新增 `scripts/build_query_set.py`
+用本地 `qwen3:4b-instruct` 生成 500 条中文查询（4 种 persona、按类目轮转打散）。本机 CPU 全流程：
+9 万池抽 500 → LLM 生成（6161 s）→ Chinese-CLIP 文本塔编码（18.2 s）→ 5,477 档压测。
+另跑同分布切片查询基线（4,500 语料 / 500 查询）作直接对照。
+
+### 结果
+
+- **hit@10 = 0.668（真实文本查询）vs 0.9982（同分布切片）**，差 33 个百分点。
+- **三种索引后端命中几乎相同（0.660~0.668）**：瓶颈在查询表达对齐，不在检索结构。
+- 166 条未命中**全部**为低 margin（`cos(查询,真值) - max cos(查询,其他) < 0.05`），**没有一条**是查询在问另一件商品。
+- 未命中样本中 **66.3% 的 top-1 与真值同 category**（全局 81.2%）；语料随机商品对余弦 >0.9 仅 0.8%，
+  说明不是近重复导致的不可分辨，而是「真值 = 那一行商品」在电商检索里不成立。
+- 延迟：HNSW P50 0.244 ms / P99 0.42 ms，仍是长尾最平的后端；精确扫描 P99 1.35 ms。
+
+### 遇到的坑
+
+1. **首轮 hit@10 = 0.5217 只来自 23 条有效查询**：查询从 9 万池抽样而语料只有前 5000 条，477 条真值
+   不在语料内被跳过。样本量不足以下结论。修法：保留已生成的查询，为缺失的 477 个商品补编码向量
+   追加到语料（222 s），真值覆盖 500/500 后重跑，得到 0.668。**教训：评测口径的有效样本量必须与
+   报告数字一起读**，脚本已在 `queries_skipped_unmapped` 字段记录跳过数。
+2. **代理不通导致 huggingface_hub 联网校验失败，91 分钟生成成果全丢**（脚本原本只在编码后写文件）。
+   已改为每批 append + flush 落盘、断点续跑（`--regenerate` 才重来），并用 `HF_HUB_OFFLINE=1`
+   加载本地已缓存模型。`HF_HUB_DISABLE_XET=1` 也必须带（xet 桥会重定向到被墙的 AWS CDN）。
+3. **LLM 侧三个连环坑**：静默错位（同类扎堆看错行）→ 锚点交叉校验；整批输出坍缩（10 条只回 4 条）→
+   qwen3 默认 thinking 吃掉 token 预算，`think:false` + `num_predict:4096`；润色词被锚点检测误杀 →
+   改为「命中其他商品锚点才算串位」并加逐条兜底。
+
+### 复现
+
+见 [QUERY_DISTRIBUTION.md](QUERY_DISTRIBUTION.md) 的复现命令。产物在 `results/real_text_query/`。

@@ -1,0 +1,199 @@
+{
+  "generated_at": "2026-10-05T03:57:58.033651+00:00",
+  "environment": {
+    "python": "3.13.14",
+    "numpy": "2.5.3",
+    "faiss": "1.15.1",
+    "platform": "Windows AMD64"
+  },
+  "config": {
+    "scales": [
+      5477
+    ],
+    "corpus": "real",
+    "corpus_name": "corpus_with_truth.npy",
+    "queries_source": "text",
+    "queries_file": "queries.npy",
+    "dimension": 512,
+    "queries": 500,
+    "top_k": 10,
+    "clusters": 128,
+    "spread": 0.5,
+    "seed": 20261004,
+    "kinds": [
+      "numpy",
+      "flat",
+      "hnsw",
+      "ivf"
+    ],
+    "rerank_sizes": [
+      10,
+      100,
+      500
+    ],
+    "partition_by": "price",
+    "partition_buckets": 16,
+    "partition_kinds": [
+      "ivf",
+      "ivfpq"
+    ]
+  },
+  "scales": [
+    {
+      "count": 5477,
+      "corpus": {
+        "source": "real-vectors",
+        "name": "corpus_with_truth.npy",
+        "vectors": 5477,
+        "dimension": 512,
+        "queries": 500,
+        "raw_vectors_mb": 10.697,
+        "queries_source": "text",
+        "queries_file": "queries.npy",
+        "queries_skipped_unmapped": 0
+      },
+      "results": [
+        {
+          "kind": "numpy",
+          "status": "ok",
+          "describe": "numpy 精确检索",
+          "effective": {
+            "ntotal": 5477
+          },
+          "build_seconds": 0.008,
+          "index_mb": 10.697,
+          "bytes_per_vector": 2048.0,
+          "rss_delta_mb": 0.0,
+          "recall_at_k": 0.668,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.668
+            },
+            {
+              "candidates": 100,
+              "recall": 0.668
+            },
+            {
+              "candidates": 500,
+              "recall": 0.668
+            }
+          ],
+          "qps_batch32": 5859.3,
+          "p50_ms": 0.804,
+          "p95_ms": 1.092,
+          "p99_ms": 1.353,
+          "mean_ms": 0.826,
+          "max_ms": 1.649,
+          "qps_single": 1210.2
+        },
+        {
+          "kind": "flat",
+          "status": "ok",
+          "describe": "faiss IndexFlatIP 精确检索",
+          "effective": {
+            "ntotal": 5477
+          },
+          "build_seconds": 0.015,
+          "index_mb": 10.697,
+          "bytes_per_vector": 2048.0,
+          "rss_delta_mb": 10.7,
+          "recall_at_k": 0.668,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.668
+            },
+            {
+              "candidates": 100,
+              "recall": 0.668
+            },
+            {
+              "candidates": 500,
+              "recall": 0.668
+            }
+          ],
+          "qps_batch32": 4241.9,
+          "p50_ms": 0.933,
+          "p95_ms": 1.181,
+          "p99_ms": 1.314,
+          "mean_ms": 0.972,
+          "max_ms": 1.533,
+          "qps_single": 1029.2
+        },
+        {
+          "kind": "hnsw",
+          "status": "ok",
+          "describe": "faiss HNSW(M=32, efC=200, efS=64)",
+          "effective": {
+            "m": 32,
+            "ef_construction": 200,
+            "ef_search": 64
+          },
+          "build_seconds": 0.681,
+          "index_mb": 12.116,
+          "bytes_per_vector": 2319.6,
+          "rss_delta_mb": 13.6,
+          "recall_at_k": 0.668,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.668
+            },
+            {
+              "candidates": 100,
+              "recall": 0.668
+            },
+            {
+              "candidates": 500,
+              "recall": 0.668
+            }
+          ],
+          "qps_batch32": 23769.7,
+          "p50_ms": 0.244,
+          "p95_ms": 0.352,
+          "p99_ms": 0.42,
+          "mean_ms": 0.256,
+          "max_ms": 0.552,
+          "qps_single": 3913.1
+        },
+        {
+          "kind": "ivf",
+          "status": "ok",
+          "describe": "faiss IVF(nlist=140, nprobe=32)",
+          "effective": {
+            "nlist": 140,
+            "nprobe": 32,
+            "nlist_configured": 140
+          },
+          "build_seconds": 0.17,
+          "index_mb": 11.014,
+          "bytes_per_vector": 2108.6,
+          "rss_delta_mb": 18.7,
+          "recall_at_k": 0.66,
+          "rerank": [
+            {
+              "candidates": 10,
+              "recall": 0.66
+            },
+            {
+              "candidates": 100,
+              "recall": 0.66
+            },
+            {
+              "candidates": 500,
+              "recall": 0.66
+            }
+          ],
+          "qps_batch32": 10422.7,
+          "p50_ms": 0.38,
+          "p95_ms": 0.721,
+          "p99_ms": 0.987,
+          "mean_ms": 0.415,
+          "max_ms": 1.516,
+          "qps_single": 2409.5
+        }
+      ]
+    }
+  ]
+}

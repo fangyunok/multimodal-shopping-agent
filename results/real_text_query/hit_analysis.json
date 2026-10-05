@@ -1,0 +1,16 @@
+{
+  "hit_at_10": 0.668,
+  "margin_mean": -0.0214,
+  "sim_true_mean": 0.7405,
+  "sim_other_mean": 0.7618,
+  "missed": 166,
+  "missed_low_margin": 166,
+  "missed_high_margin": 0,
+  "queries": 500,
+  "corpus": 5477,
+  "same_distribution_recall_at_10": 0.9982,
+  "top1_same_category_rate_all": 0.812,
+  "top1_same_category_rate_missed": 0.663,
+  "corpus_pair_cosine_gt_090": 0.008,
+  "note": "margin = cos(query, 真值) - max cos(query, 其他商品)；未命中 166 条全部为低间距（无一条属查询与商品语义无关）"
+}
