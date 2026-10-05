@@ -96,6 +96,11 @@ def encode_request(
 class FaissRetriever:
     """近似最近邻检索后端；对外行为与精确后端保持一致，差异只体现在召回率与延迟上。"""
 
+    @property
+    def route_name(self) -> str:
+        """融合层里的稳定标识：把后端类型带进统计，避免五路检索在报告里都叫同一个名字。"""
+        return f"ann-{self.ann.config.kind}"
+
     def __init__(
         self,
         products: list[Product],
@@ -227,6 +232,22 @@ class FaissRetriever:
             return self._rank_by_rating(request)
         return self.search_vector(query_vector, request)
 
+    def search_candidates(self, request: SearchRequest, count: int) -> list[SearchHit]:
+        """返回最多 ``count`` 条候选，不做 top_k 截断。
+
+        融合与重排需要比 ``top_k`` 宽得多的候选集：``SearchRequest.top_k`` 的上限是 20
+        （对外接口契约），而两阶段检索的候选规模是上百条级。所以这条入口与 ``search``
+        共用同一段检索逻辑，只在最后一步放宽截断，避免两条路径给出不一致的结果。
+        """
+        if count < 1:
+            raise ValueError("count 必须大于等于 1")
+        wanted = max(int(request.top_k), int(count))
+        query_vector = self.encode_request(request)
+        if query_vector is None:
+            self.last_stats = {"mode": "rating_fallback", "rounds": 0, "examined": 0}
+            return self._rank_by_rating(request.model_copy(update={"top_k": wanted}, deep=False))
+        return self._search_wide(query_vector, request, wanted)
+
     def encode_request(self, request: SearchRequest) -> np.ndarray | None:
         """把请求编码成查询向量；文字与图片都没有时返回 None。"""
         return encode_request(self.encoder, request, self.ann.config.dimension)
@@ -241,11 +262,21 @@ class FaissRetriever:
             query_vector, request, has_text=bool(request.query), has_image=bool(request.image_path)
         )
 
+    def _search_wide(self, query_vector: np.ndarray, request: SearchRequest, limit: int) -> list[SearchHit]:
+        return self._ann_search(
+            query_vector, request, has_text=bool(request.query), has_image=bool(request.image_path), limit=limit
+        )
+
     def _ann_search(
-        self, query_vector: np.ndarray, request: SearchRequest, has_text: bool, has_image: bool
+        self,
+        query_vector: np.ndarray,
+        request: SearchRequest,
+        has_text: bool,
+        has_image: bool,
+        limit: int | None = None,
     ) -> list[SearchHit]:
         total = self.ann.count
-        wanted = int(request.top_k)
+        wanted = int(request.top_k) if limit is None else max(int(request.top_k), int(limit))
         # 开启重排时，检索目标从"凑够 top_k"抬高到"凑够 rerank_candidates"——
         # 粗筛的价值全在候选集够大，候选集不够大时重排只能把一堆无关项排出个先后。
         target = max(wanted, self.rerank_candidates) if self.rerank_candidates else wanted

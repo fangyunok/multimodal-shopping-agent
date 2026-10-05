@@ -12,6 +12,7 @@
 |---|---|---|
 | 多模态内容理解与检索（图文共享向量空间） | Chinese-CLIP 图文索引 Recall@1 `0.1667 → 0.7500` | 100 商品、12 条跨视角 test 查询；95% CI `[0.50, 1.00]`，不可外推到完整商品分布 |
 | 属性文本检索与融合 | CLIP 没有全面超过词法基线 | 品牌、型号等精确 token 仍需词法信号，因此保留融合检索 |
+| 混合检索与重排 | 稠密 hit@10 `0.668 → 0.744`（RRF 融合 BM25，+7.6pt） | 两路证据错误模式不同才互补——BM25 单独只有 0.598；候选集召回 0.946 是重排的天花板；口径见[混合检索文档](docs/HYBRID_RETRIEVAL.md) |
 | Prompt 与规划编排 | Qwen2.5-3B 联合准确率 `0.36 → 0.51`、类目准确率 `0.49 → 0.87` | 同一 100 条锁定集；同时产生 10% 无效规划，预算提取仍是短板 |
 | 工具编排与可溯源生成 | Schema Dispatcher + 内容 ID 引用 | 模型不能直接编造价格和库存；非法参数可拒绝、引用忠实度可度量 |
 | 在线性能 | 规则 Agent 端到端 P50 `0.07 ms` / P95 `0.41 ms`；LLM Planner P50 `188 ms` / P95 `236 ms` | 计时在商品目录与索引预加载后统计，不含进程启动与模型加载 |
@@ -348,6 +349,28 @@ k 再大就只能给出约 700 条（faiss 用 `-1` 把结果补齐到 k，不�
 过滤压力测试（点名查询，50 条探针）的判据刻意**不是**"是否凑满 top_k"，而是**与精确后端的结果集是否一致**：
 在只放行 1% 商品的目录上，精确检索本身也凑不满 top_k，用"凑满"当标准会得出"精确后端也不合格"的荒谬结论。
 
+### 混合检索层：两路证据 + 名次融合 + 重排
+
+[分布 gap 量化](docs/QUERY_DISTRIBUTION.md)用 500 条真实中文查询测出：同分布切片查询 recall@10 = 0.9982，
+用户打字描述只有 0.668，**差 33 个百分点**；而五种索引后端在这个场景下的命中差异只有 ±0.8pt。
+结论是瓶颈不在检索结构，而在**只有一路证据**——稠密向量擅长"意思相近"，但对精确词项是糊的。
+
+所以补了两条与稠密检索错误模式不同的路径：
+
+- **`bm25.py` 稀疏检索**：中文按"单字 + 相邻二元组"切分（单字保召回、二元组保精度），
+  拉丁串整体保留——`5W-30`、`132x168`、`J7` 这类规格型号是最强的区分度信号，拆成单字符会让它们消失。
+  打分是 postings 上的稀疏累加，复杂度只随查询词的实际分布度增长，不随语料条数增长。
+- **`rrf.py` 名次融合**：`RRF(d) = Σ w_r / (k + rank_r(d))`，**只吃名次不吃分数**。
+  BM25 分数无上界、CLIP 余弦落在 [-1, 1]，直接加权等于让 `lexical_weight` 去承担全部量纲对齐的活；
+  RRF 天然免疫这个问题，`rrf_k=60` 是唯一的平滑常数。
+
+**重排（`rerank.py`）必须放在"粗排放宽之后"**，这是两阶段检索最容易做错的地方：
+粗排就截到 top_k 的话，重排只能在这 k 条里换顺序，永远换不出更好的东西。
+`RerankRetriever` 因此要求检索器提供 `search_candidates(request, count)` 这一候选级入口，
+并把"重排了多少条、模型推理多少毫秒"写进 `last_stats`。`ExactVectorReranker` 是零依赖降级路径，
+`CrossEncoderReranker`（bge-reranker）是能改变排序的那一级——双塔编码器分别编码 query 与 doc，
+两者之间没有交互，所以它对词序、规格数字天生不敏感，cross-encoder 有交互。
+
 ### 过滤下推：把过滤做进索引结构
 
 超采样解决不了"过滤强度高"这一类查询，根因不在参数上：**价格过滤与向量相似度本来就无关**，
@@ -436,7 +459,10 @@ data/                         示例商品与评测集
 src/shopping_agent/
   retrieval.py               CPU 图文混合检索
   semantic_retrieval.py      Chinese-CLIP 共享向量检索
-  fusion_retrieval.py        词法 + 向量分数融合
+  fusion_retrieval.py        词法 + 向量分数融合（线性加权）
+  bm25.py                    稀疏检索层：BM25 倒排索引（中文单字+二元组分词、postings 稀疏打分）
+  rrf.py                     RRF 名次融合：多路检索只按名次合并，免疫分数量纲差异
+  rerank.py                  重排层：精确向量重排（零依赖降级）+ cross-encoder 重排（可选依赖）
   ann_index.py               ANN 索引层：numpy / flat / hnsw / ivf / ivfpq 五种后端同一契约
   faiss_retrieval.py         ANN 检索后端：自适应超采样、精确兜底、粗召回 + 精确重排、运行期统计
   partitioned.py             过滤下推：按价位/类目分段建索引，查询时先按过滤条件选段再检索
@@ -456,6 +482,7 @@ src/shopping_agent/
 scripts/benchmark_mcp.py      MCP 并发压测（进程内回环 / stdio 子进程两种口径）
 scripts/benchmark_agent_runtime.py  会话上下文预算与 ReAct 步数 / 延迟实测
 scripts/benchmark_ann_scaling.py    ANN 规模化压测：索引层 + 重排对照 + 端到端 + 过滤压力（含分段下推），产出 results/*.md
+scripts/benchmark_hybrid_retrieval.py  混合检索对照：稠密 / BM25 / RRF / RRF+重排 同一批真实查询上的 hit@k 与延迟
 scripts/serve_encoder.py      GPU 编码服务（/embed/text、/embed/image、/metrics）
 tests/                        单元与接口测试
 ```
@@ -476,6 +503,7 @@ tests/                        单元与接口测试
 - M8 规模化（索引层）：五种后端统一契约、索引清单 v2、自适应超采样与精确兜底、粗召回 + 精确重排（`rerank_candidates`）、过滤下推的分段索引路由（`partitioned.py`）、合成语料与精确真值、跨四个量级的索引/端到端/过滤压力压测；Chinese-CLIP 真实商品向量（91,940 条 ABO 全量）同口径复核（[REAL_CLIP_BENCHMARK.md](docs/REAL_CLIP_BENCHMARK.md)）；**真实文本查询评测集（LLM 按商品事实生成中文查询 + 原商品真值）与分布 gap 量化——hit@10 0.668 vs 同分布切片 0.998，并据此确认瓶颈在表达对齐而非检索结构**（[QUERY_DISTRIBUTION.md](docs/QUERY_DISTRIBUTION.md)）
 - M8 规模化（服务层）：会话外置（内存 / Redis）、Lua 原子 CAS 与冲突可见、存活/就绪探针分离、`/chat` 无状态会话接口
 - M8 规模化（编码与版本层）：编码服务 HTTP 化（动态批处理 + 两级缓存）、索引版本目录与原子发布/回滚、增量更新与压实
+- M9 检索质量：BM25 稀疏检索层（中文单字+二元组分词、postings 稀疏打分）、RRF 名次融合（免疫分数量纲差异）、重排层（精确向量零依赖降级 + cross-encoder，候选级入口 `search_candidates` 作为两阶段检索的正确性契约）、CLI `--retriever-backend rrf`，同一批 500 条真实文本查询上 hit@10 0.668 → 0.744（[HYBRID_RETRIEVAL.md](docs/HYBRID_RETRIEVAL.md)）
 
 **进行中**
 
@@ -484,8 +512,8 @@ tests/                        单元与接口测试
 - Agent 端到端 P50/P95 延迟基准的自动化产出
 - 接入真实 LLM 决策器（实现 `Reasoner.decide()`），并用 LLM 步数分布校准当前基线
 - MCP：streamable-http 并发容量实测
-- 检索质量：混合检索（BM25 + 向量 RRF 融合）与 cross-encoder 重排（bge-reranker）——针对 QUERY_DISTRIBUTION.md 量化的 33pt 表达 gap
-- 评测口径：多真值标注（category + 价格区间口径的等价商品集合）与跨语言查询集（英文查询对照），评测脚本已支持 `--queries-catalog` 换标注文件
+- 检索质量：cross-encoder 重排的收益/延迟权衡在 GPU 或独立排序服务上复测（CPU 上 1,733 ms/查询），候选窗口放大到 300+ 看候选召回是否继续爬升，并按查询类型分档决定是否只对高价值查询启用重排
+- 评测口径：多真值标注（category + 价格区间口径的等价商品集合）与跨语言查询集（英文查询对照），评测脚本已支持 `--queries-catalog` 换标注文件；报告已并列 `hit@k_category` 宽口径
 - 规模化：过滤下推与分段在真实向量上的复跑（真实向量 + 商品目录已就绪，见 [docs/REAL_CLIP_BENCHMARK.md](docs/REAL_CLIP_BENCHMARK.md)）
 - 规模化：百万级语料与多副本并发的实测（需要 ≥16 GB 内存 / 多机）；分段的动态调整（按查询分布自动选分段边界，而不是按分位数静态切）
 

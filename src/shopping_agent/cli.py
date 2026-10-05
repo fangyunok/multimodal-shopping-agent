@@ -9,18 +9,21 @@ from .agent import ShoppingAgent
 from .abo import build_cross_view_benchmark, convert_abo, fetch_abo_subset_images
 from .ann_index import AnnIndexConfig
 from .benchmark import evaluate_cases, generate_attribute_cases, read_benchmark, write_benchmark
+from .bm25 import BM25Retriever
 from .encoders import ChineseClipEncoder
 from .dataset import prepare_dataset
 from .evaluation import evaluate
 from .faiss_retrieval import FaissRetriever
 from .fusion_retrieval import ScoreFusionRetriever
+from .rerank import CrossEncoderReranker, ExactVectorReranker, RerankRetriever
+from .rrf import ReciprocalRankFusionRetriever
 from .incremental import (
     IndexVersionManager,
     build_incremental_version,
     load_changes,
 )
 from .llm_planner import LLMPlanner
-from .indexing import build_ann_index, build_index, encode_products, load_catalog
+from .indexing import build_ann_index, build_index, encode_products, load_catalog, load_vectors_if_present
 from .models import AgentRequest
 from .partitioned import PartitionedRetriever
 from .planner import RulePlanner
@@ -83,6 +86,32 @@ def rerank_kwargs(args) -> dict[str, int]:
     里定义一次，否则改默认值就会漏掉所有手工传参的调用点。
     """
     return {"rerank_candidates": args.rerank_candidates} if args.rerank_candidates else {}
+
+
+def build_reranker(args, encoder, products):
+    """按 ``--reranker`` 造重排器；``exact-vector`` 需要索引里的原始向量。
+
+    精确重排的分数就是向量余弦，与稠密粗排同源——它跑通的是"粗排 → 重排"这条链路，
+    真正能改变排序的是 ``cross-encoder``（双塔之间没有交互，cross-encoder 有）。
+    """
+    if args.reranker == "exact-vector":
+        index_dir = Path(args.index_dir).resolve() if args.index_dir else None
+        vectors = load_vectors_if_present(index_dir) if index_dir else None
+        if vectors is None:
+            raise SystemExit(
+                "--reranker exact-vector 需要索引目录里的 vectors.npy：请用 --index-dir 指定，"
+                "或改用 --reranker cross-encoder"
+            )
+        reranker = ExactVectorReranker(encoder, vectors)
+        reranker.bind_products(products)
+        return reranker
+    return CrossEncoderReranker(
+        model_name=args.rerank_model,
+        device=args.device,
+        batch_size=args.batch_size,
+        max_length=args.rerank_max_length,
+        dtype=args.rerank_dtype,
+    )
 
 
 def handle_index_versioning(args) -> bool:
@@ -160,10 +189,28 @@ def main() -> None:
     parser.add_argument("--image-weight", type=float, default=0.5)
     parser.add_argument(
         "--retriever-backend",
-        choices=("baseline", "clip", "fusion", "ann", "partitioned"),
+        choices=("baseline", "clip", "fusion", "ann", "partitioned", "rrf"),
         default="baseline",
     )
     parser.add_argument("--lexical-weight", type=float, default=0.65)
+    # ---- RRF 混合检索（--retriever-backend rrf）----
+    parser.add_argument("--rrf-k", type=int, default=60, help="RRF 平滑常数：越大越压头部，默认 60")
+    parser.add_argument("--rrf-oversample", type=float, default=5.0, help="融合时的候选窗口倍数（相对 top_k）")
+    parser.add_argument("--dense-weight", type=float, default=1.0, help="RRF 中向量检索一路的权重")
+    parser.add_argument("--bm25-weight", type=float, default=1.0, help="RRF 中 BM25 一路的权重")
+    parser.add_argument("--bm25-k1", type=float, default=1.5, help="BM25 词频饱和参数")
+    parser.add_argument("--bm25-b", type=float, default=0.75, help="BM25 文档长度归一化强度")
+    parser.add_argument(
+        "--reranker",
+        choices=("none", "exact-vector", "cross-encoder"),
+        default="none",
+        help="叠在 RRF 粗排之上的重排器。exact-vector 零额外依赖（需 --index-dir 带 vectors.npy）；"
+        "cross-encoder 需要 torch + transformers",
+    )
+    parser.add_argument("--cross-rerank-candidates", type=int, default=100, help="送入重排的候选数")
+    parser.add_argument("--rerank-model", default="BAAI/bge-reranker-base", help="cross-encoder 模型名")
+    parser.add_argument("--rerank-max-length", type=int, default=128, help="cross-encoder 最大序列长度")
+    parser.add_argument("--rerank-dtype", choices=("float32", "float16", "bfloat16"), default="float32")
     parser.add_argument("--index-dir")
     parser.add_argument("--build-ann-index", metavar="DIRECTORY", help="按 --ann-* 参数构建指定类型的 ANN 索引")
     parser.add_argument(
@@ -309,14 +356,33 @@ def main() -> None:
         retriever = FaissRetriever.from_index(
             args.catalog, args.index_dir, encoder, args.model_id, ann_config_from(args), **rerank_kwargs(args)
         )
-    elif args.retriever_backend in {"clip", "fusion"}:
+    elif args.retriever_backend in {"clip", "fusion", "rrf"}:
         encoder = ChineseClipEncoder(args.model, args.device, args.batch_size)
         semantic = (
             SemanticRetriever.from_index(args.catalog, args.index_dir, encoder, args.model_id)
             if args.index_dir
             else SemanticRetriever.from_jsonl(args.catalog, encoder)
         )
-        retriever = ScoreFusionRetriever(HybridRetriever.from_jsonl(args.catalog), semantic, args.lexical_weight) if args.retriever_backend == "fusion" else semantic
+        if args.retriever_backend == "fusion":
+            retriever = ScoreFusionRetriever(HybridRetriever.from_jsonl(args.catalog), semantic, args.lexical_weight)
+        elif args.retriever_backend == "rrf":
+            # RRF 把 BM25 与向量检索当两路**独立证据**合并，与 fusion 的线性加权不同：
+            # 前者只吃名次，后者依赖两路分数量纲可比（见 rrf.py 模块说明）。
+            catalog_path = Path(args.catalog).resolve()
+            retriever = ReciprocalRankFusionRetriever(
+                [
+                    (semantic, args.dense_weight),
+                    (BM25Retriever.from_jsonl(catalog_path, k1=args.bm25_k1, b=args.bm25_b), args.bm25_weight),
+                ],
+                rrf_k=args.rrf_k,
+                oversample=args.rrf_oversample,
+            )
+            if args.reranker != "none":
+                # 重排必须叠在粗排之后：粗排就截到 top_k 的话重排永远换不出更好的东西。
+                reranker = build_reranker(args, encoder, retriever.products)
+                retriever = RerankRetriever(retriever, reranker, candidates=args.cross_rerank_candidates)
+        else:
+            retriever = semantic
     else:
         retriever = HybridRetriever.from_jsonl(args.catalog)
     if args.build_benchmark:

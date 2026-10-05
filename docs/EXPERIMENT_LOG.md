@@ -411,3 +411,47 @@ python scripts/benchmark_ann_scaling.py --vectors outputs/real_clip/vectors_fp16
 ### 复现
 
 见 [QUERY_DISTRIBUTION.md](QUERY_DISTRIBUTION.md) 的复现命令。产物在 `results/real_text_query/`。
+
+## 2026-10-05：BM25 + RRF + cross-encoder 三档混合检索对照（M9）
+
+### 做了什么
+
+针对上一条结论（"瓶颈在表达对齐、不在检索结构"）补两路与稠密检索错误模式不同的证据：
+
+- 新增 `bm25.py`：BM25 倒排索引。中文按「单字 + 相邻二元组」无词典切分，拉丁串整体保留
+  （`5W-30` / `132x168` / `J7` 这类规格型号是最强区分度信号）。IDF 用 `log(1 + (N-df+0.5)/(df+0.5))`
+  保证恒正——纯 BM25 里出现得越普遍的词若拿到负 IDF，等于"普遍出现"被当成"负相关"推后。
+- 新增 `rrf.py`：RRF 名次融合，只吃名次不吃分数，免疫 BM25 无上界分数与 CLIP 余弦的量纲差异。
+- 新增 `rerank.py`：重排层。`ExactVectorReranker`（零依赖降级）+ `CrossEncoderReranker`（可选依赖）。
+- `FaissRetriever` / `BM25Retriever` / `ReciprocalRankFusionRetriever` 统一新增候选级契约
+  `search_candidates(request, count)`，并接入 CLI（`--retriever-backend rrf`）。
+- 新增 `scripts/benchmark_hybrid_retrieval.py`：同一批语料 / 同一批查询 / 同一套真值，四档策略对照。
+
+### 结果
+
+- **稠密 0.6680 / BM25 0.5980 / RRF 0.7440（+7.6pt）**。BM25 单独是负收益，两路融合却净涨——
+  唯一解释是两路错误模式不同（稠密失手在"同品类近邻压过真值"，BM25 失手在"语义不同但词面撞车"，
+  而稠密失败样本中 66.3% 恰属前者）。
+- **候选集召回：top-10 = 0.770，top-100 = 0.946**。重排的天花板由此确定，17.6pt 的命中藏在候选集里。
+- 倒排表 2.02 MB vs 稠密向量矩阵 10.7 MB：倒排比向量小 5 倍，两路并存内存可行。
+- 延迟 P50：稠密 0.78 ms / BM25 0.98 ms / RRF 3.31 ms；cross-encoder CPU 1,733 ms/查询（P95 2,796 ms）。
+- 宽口径 `hit@10_category`：稠密 0.9620 / RRF 0.9540。两个口径回答的是两个不同问题，报告并列输出。
+
+### 遇到的坑
+
+1. **cross-encoder 首轮 hit@10 与 RRF 完全持平（都 0.744），但 MRR 从 0.5434 升到 0.6725。**
+   根因：候选收集调了 `search()` 而非 `search_candidates()`，而 `search()` 按 `request.top_k`(=10) 截断，
+   于是重排器拿到的是**已被截到 10 条的集合**，只能在这 10 条里换顺序。
+   这正是两阶段检索最容易做错的地方，也是把 `search_candidates` 定为检索器必备契约的原因
+   （`rerank.py` / `rrf.py` 模块说明里都写了这条，单测 `test_rerank_requests_wider_candidate_set_than_top_k` 钉住）。
+2. **`ExactVectorReranker` 把 hit@10 打回 0.668**（等于稠密基线）。它的分数就是向量余弦、与粗排同源，
+   重排等于"丢掉 BM25 的贡献、只按向量重排"。这一档的作用是零依赖降级路径 + 把"重排有没有真在跑"
+   变成可观测，不是增益来源。
+3. **冒烟跑只打分前 20 条查询，但指标仍按 500 条统计**，得到 0.77 的假数字——未打分的候选拿到 -inf，
+   排序退化成粗排原序，等于把粗排成绩算成重排的成绩。已改为该档只统计有分数的查询并打印样本数。
+4. **`BM25Index.summary()` 的 `size_mb` 保留 3 位小数，小索引舍入到 0.0**，测试断言需打在字节数上。
+
+### 复现
+
+见 [HYBRID_RETRIEVAL.md](HYBRID_RETRIEVAL.md)。产物在 `results/real_text_query/`：
+`hybrid_retrieval_benchmark.{md,json}` 与 `ce_scores_100.json`（500 × 100 候选打分，可复现重排档）。
