@@ -212,6 +212,16 @@ class TableRerankRetriever:
         self.catalog_path = base.catalog_path
         self.last_stats: dict[str, object] = {}
 
+    def search_candidates(self, request: SearchRequest, count: int) -> list[SearchHit]:
+        """返回重排后的前 ``count`` 条——候选级入口必须返回**本层真正的输出**。
+
+        这里刻意不做"透传粗排候选"的实现：透传会让调用方拿到一份没重排过的列表，
+        而它以为拿到的是重排结果。评测脚本正是按"有候选级入口就自己切片"的逻辑
+        分支的，透传会让重排被静默绕过——指标看起来合理，重排其实没跑。
+        重排档的天花板应该看粗排那档的 candidate_recall，不在本档重复量一次。
+        """
+        return self.search(request.model_copy(update={"top_k": min(int(count), 20)}, deep=False))
+
     def search(self, request: SearchRequest) -> list[SearchHit]:
         coarse = self.base.search_candidates(request, self.candidates)
         if not coarse:
@@ -350,6 +360,47 @@ def score_query(
     return strict, loose, reciprocal, dcg, latency, candidate_hit, len(coarse_ids) if coarse_ids else None
 
 
+def sweep_candidate_window(
+    retriever,
+    encoder: FixedQueryEncoder,
+    queries: list[dict],
+    windows: list[int],
+    top_k: int,
+) -> list[dict[str, object]]:
+    """扫粗排候选窗口对 hit@k 的影响，回答"窗口该开多大"。
+
+    这条曲线是 A2 期间踩过的坑的正面解法：融合策略用 ``search()`` 评出来的
+    hit@10 会随候选窗口变化（窗口=10 时 0.744，放宽到 50+ 后饱和在 0.770），
+    同一份代码因此能给出两个都"看起来合理"的数字。把窗口做成显式参数后，
+    报告里每个策略的候选窗口都是已知的，比较才有意义。
+    """
+    candidates_of = getattr(retriever, "search_candidates", None)
+    if not callable(candidates_of):
+        return []
+    rows: list[dict[str, object]] = []
+    for window in windows:
+        hits = 0
+        ceiling = 0
+        for position, query_row in enumerate(queries):
+            encoder.use(position)
+            request = SearchRequest(query=query_row["query"], top_k=top_k)
+            candidates = candidates_of(request, window)
+            ids = [hit.product.id for hit in candidates]
+            if query_row["truth_id"] in ids:
+                ceiling += 1
+            if query_row["truth_id"] in ids[:top_k]:
+                hits += 1
+        total = max(len(queries), 1)
+        rows.append(
+            {
+                "window": int(window),
+                f"hit@{top_k}": round(hits / total, 4),
+                f"candidate_recall@{window}": round(ceiling / total, 4),
+            }
+        )
+    return rows
+
+
 def collect_rerank_candidates(retriever, encoder, queries: list[dict], count: int) -> list[list[Product]]:
     """按粗排顺序取每条查询的前 ``count`` 条候选——这就是线上重排器的输入。
 
@@ -474,6 +525,55 @@ def render_markdown(report: dict[str, object]) -> str:
         "",
         "**候选召回**是重排能达到的天花板：真值落在粗排候选集里的比例。重排只能在候选集内换顺序，",
         "进不到候选集的商品无论用多强的重排都出不来——所以它和 hit@k 必须一起读。",
+    ]
+    rerank_row = next((row for row in rows if row["kind"] == "rrf_rerank"), None)
+    coarse_row = next((row for row in rows if row["kind"] == "rrf"), None)
+    # 天花板取粗排那档：重排档自己量的是"重排后前 N 条里有没有真值"，
+    # 那个数被重排结果本身决定，拿它当上限会把"排序失败"算成"召回失败"。
+    if rerank_row and coarse_row and "candidate_recall" in coarse_row:
+        ceiling = coarse_row["candidate_recall"]
+        reached = rerank_row[f"hit@{top_k}"]
+        missed = ceiling - reached
+        lines += [
+            "",
+            "## 重排吃到了多少天花板",
+            "",
+            f"- 候选集含真值：**{ceiling:.4f}**（天花板）",
+            f"- 重排后 hit@{top_k}：**{reached:.4f}**",
+            f"- 仍未排进 top-{top_k}：**{missed:.4f}**（{missed * 100:.1f}pt）",
+            "",
+            f"重排把候选集里已召回的命中捞出了 {reached / ceiling * 100:.1f}%。"
+            f"剩下的 {missed * 100:.1f}pt 属于两类，处置方式完全不同：",
+            "",
+            "| 剩余损失的类型 | 含义 | 该动什么 |",
+            "|---|---|---|",
+            f"| 粗排窗口太窄（真值在 100 名开外） | 召回问题 | 放宽候选窗口、加一路召回 |",
+            f"| 真值在候选集里但重排没排进前十 | 排序问题 | 换更强的 cross-encoder、hard-negative 训练 |",
+            "",
+            "两阶段检索的分工由此明确：**粗排决定上限，重排决定逼近上限的程度**。"
+            "重排再强也补不回没进候选集的商品，所以先确认候选集够大再看重排收益。",
+        ]
+    sweep = config.get("window_sweep") or []
+    if sweep:
+        lines += [
+            "",
+            "## 粗排候选窗口扫描",
+            "",
+            f"| 候选窗口 | hit@{top_k} | 候选召回 |",
+            "|---|---|---|",
+        ]
+        for row in sweep:
+            lines.append(
+                f"| {row['window']} | {row[f'hit@{top_k}']:.4f} | {row[f'candidate_recall@{row['window']}']:.4f} |"
+            )
+        lines += [
+            "",
+            "融合策略的 hit@k **不是策略本身的固定属性**，它随粗排窗口变化：窗口太窄时融合只能看到各路前几名，",
+            "融合出的 top-10 自然更差。所以引用融合策略的数字时必须连候选窗口一起给出，",
+            "否则同一份代码能支撑两个都看似合理的结论。窗口超过 100 后 hit@k 基本饱和，",
+            "继续放宽只增加重排成本、不再增加召回。",
+        ]
+    lines += [
         "",
         "## 延迟分布",
         "",
@@ -517,6 +617,11 @@ def main() -> None:
     parser.add_argument("--bm25-k1", type=float, default=1.5)
     parser.add_argument("--bm25-b", type=float, default=0.75)
     parser.add_argument("--kinds", default=",".join(ALL_KINDS), help="要跑的策略，逗号分隔")
+    parser.add_argument(
+        "--sweep-windows",
+        default="",
+        help="扫描 RRF 粗排候选窗口对 hit@k 的影响，逗号分隔（如 10,50,100,300）",
+    )
     parser.add_argument("--output-dir", default="results/real_text_query")
     args = parser.parse_args()
 
@@ -698,6 +803,16 @@ def main() -> None:
             f"p50={row['latency_p50_ms']:.2f}ms{ceiling}"
         )
 
+    window_sweep: list[dict[str, object]] = []
+    if args.sweep_windows:
+        windows = [int(value) for value in args.sweep_windows.split(",") if value.strip()]
+        window_sweep = sweep_candidate_window(rrf, encoder, queries, windows, args.top_k)
+        for row in window_sweep:
+            print(
+                f"  window={row['window']:<4d} hit@{args.top_k}={row[f'hit@{args.top_k}']:.4f} "
+                f"cand_recall={row[f'candidate_recall@{row['window']}']:.4f}"
+            )
+
     report = {
         "config": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -720,6 +835,7 @@ def main() -> None:
             "rerank_candidates": args.rerank_candidates,
             "cross_encoder": rerank_payload["meta"] if rerank_payload else None,
             "kinds": [row["kind"] for row in reports],
+            "window_sweep": window_sweep,
             "python": platform.python_version(),
             "platform": platform.platform(),
         },

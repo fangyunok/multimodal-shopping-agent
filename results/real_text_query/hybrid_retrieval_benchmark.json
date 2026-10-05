@@ -1,6 +1,6 @@
 {
   "config": {
-    "generated_at": "2026-10-05T04:35:13.715553+00:00",
+    "generated_at": "2026-10-05T07:14:48.558598+00:00",
     "corpus": 5477,
     "corpus_name": "corpus_with_truth.npy",
     "dimension": 512,
@@ -14,7 +14,7 @@
     "bm25_weight": 1.0,
     "bm25_k1": 1.5,
     "bm25_b": 0.75,
-    "bm25_build_seconds": 0.99,
+    "bm25_build_seconds": 1.089,
     "bm25_summary": {
       "count": 5477,
       "vocabulary_size": 32267,
@@ -31,14 +31,46 @@
       "batch_size": 16,
       "max_length": 128,
       "queries_scored": 500,
-      "latency_mean_ms": 1733.54,
-      "latency_p95_ms": 2795.86
+      "latency_mean_ms": 17499.38,
+      "latency_p95_ms": 20110.95
     },
     "kinds": [
       "dense_only",
       "bm25_only",
       "rrf",
       "rrf_rerank"
+    ],
+    "window_sweep": [
+      {
+        "window": 10,
+        "hit@10": 0.744,
+        "candidate_recall@10": 0.744
+      },
+      {
+        "window": 25,
+        "hit@10": 0.76,
+        "candidate_recall@25": 0.87
+      },
+      {
+        "window": 50,
+        "hit@10": 0.774,
+        "candidate_recall@50": 0.922
+      },
+      {
+        "window": 100,
+        "hit@10": 0.77,
+        "candidate_recall@100": 0.946
+      },
+      {
+        "window": 200,
+        "hit@10": 0.768,
+        "candidate_recall@200": 0.96
+      },
+      {
+        "window": 300,
+        "hit@10": 0.77,
+        "candidate_recall@300": 0.968
+      }
     ],
     "python": "3.13.14",
     "platform": "Windows-11-10.0.26200-SP0"
@@ -51,65 +83,71 @@
       "hit@10_category": 0.962,
       "mrr": 0.4853,
       "ndcg@10": 0.5295,
-      "latency_p50_ms": 0.776,
-      "latency_p95_ms": 1.01,
-      "latency_mean_ms": 0.81,
+      "latency_p50_ms": 2.105,
+      "latency_p95_ms": 2.934,
+      "latency_mean_ms": 2.211,
       "last_stats": {
         "mode": "dense_exact",
-        "candidates": 10,
-        "query_ms": 0.78
-      }
+        "candidates": 100,
+        "query_ms": 0.938
+      },
+      "candidate_window": 100,
+      "candidate_recall": 0.868
     },
     {
       "kind": "bm25_only",
       "queries": 500,
       "hit@10": 0.598,
       "hit@10_category": 0.816,
-      "mrr": 0.3208,
-      "ndcg@10": 0.3859,
-      "latency_p50_ms": 0.984,
-      "latency_p95_ms": 1.632,
-      "latency_mean_ms": 1.036,
+      "mrr": 0.3211,
+      "ndcg@10": 0.3862,
+      "latency_p50_ms": 2.4,
+      "latency_p95_ms": 3.56,
+      "latency_mean_ms": 2.399,
       "last_stats": {
         "mode": "bm25",
-        "candidates": 10,
-        "scanned": 10,
-        "fraction": 0.0018
-      }
+        "candidates": 100,
+        "scanned": 100,
+        "fraction": 0.0183
+      },
+      "candidate_window": 100,
+      "candidate_recall": 0.814
     },
     {
       "kind": "rrf",
       "queries": 500,
-      "hit@10": 0.744,
-      "hit@10_category": 0.954,
-      "mrr": 0.5434,
-      "ndcg@10": 0.5915,
-      "latency_p50_ms": 3.311,
-      "latency_p95_ms": 4.117,
-      "latency_mean_ms": 3.362,
+      "hit@10": 0.77,
+      "hit@10_category": 0.958,
+      "mrr": 0.5545,
+      "ndcg@10": 0.606,
+      "latency_p50_ms": 15.415,
+      "latency_p95_ms": 21.174,
+      "latency_mean_ms": 16.719,
       "last_stats": {
         "mode": "rrf",
         "rrf_k": 60,
         "oversample": 5.0,
-        "candidate_window": 50,
+        "candidate_window": 500,
         "routes": 2,
-        "fused_candidates": 97,
+        "fused_candidates": 889,
         "per_route_hits": {
-          "dense": 50,
-          "bm25": 50
+          "dense": 500,
+          "bm25": 500
         }
-      }
+      },
+      "candidate_window": 100,
+      "candidate_recall": 0.946
     },
     {
       "kind": "rrf_rerank",
       "queries": 500,
-      "hit@10": 0.744,
-      "hit@10_category": 0.954,
-      "mrr": 0.6725,
-      "ndcg@10": 0.6903,
-      "latency_p50_ms": 15.123,
-      "latency_p95_ms": 16.256,
-      "latency_mean_ms": 15.763,
+      "hit@10": 0.918,
+      "hit@10_category": 0.986,
+      "mrr": 0.7669,
+      "ndcg@10": 0.8034,
+      "latency_p50_ms": 15.485,
+      "latency_p95_ms": 19.555,
+      "latency_mean_ms": 16.115,
       "last_stats": {
         "rerank": "cross-encoder",
         "reranked": 100,
@@ -117,7 +155,9 @@
         "model": "BAAI/bge-reranker-base",
         "candidates": 100,
         "model_inference_ms": 0.0
-      }
+      },
+      "candidate_window": 20,
+      "candidate_recall": 0.936
     }
   ]
 }
