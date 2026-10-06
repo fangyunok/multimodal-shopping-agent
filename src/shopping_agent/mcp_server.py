@@ -50,6 +50,7 @@ T = TypeVar("T")
 DEFAULT_TOOL_TIMEOUT_SECONDS = 2.0
 DEFAULT_MAX_CONCURRENCY = 8
 DEFAULT_IDEMPOTENCY_TTL_SECONDS = 30.0
+DEFAULT_MAX_REPLAY_ENTRIES = 1024
 DEFAULT_BACKOFF_BASE_SECONDS = 0.02
 
 
@@ -63,6 +64,11 @@ class ServerConfig(BaseModel):
     backoff_base_seconds: float = Field(default=DEFAULT_BACKOFF_BASE_SECONDS, ge=0)
     max_concurrency: int = Field(default=DEFAULT_MAX_CONCURRENCY, ge=1)
     idempotency_ttl_seconds: float = Field(default=DEFAULT_IDEMPOTENCY_TTL_SECONDS, ge=0)
+    max_replay_entries: int = Field(
+        default=DEFAULT_MAX_REPLAY_ENTRIES,
+        ge=1,
+        description="幂等重放缓存的条目上限；超出后先清理过期项，仍超限再淘汰最早写入的条目",
+    )
     react_max_steps: int = Field(default=6, ge=1, description="单轮 ReAct 最大步数")
     session_context_budget: int = Field(
         default=2048, ge=512, description="每个会话的上下文 token 预算（需大于预留的回复额度）"
@@ -143,6 +149,7 @@ class ToolRuntime:
         self.metrics = ServerMetrics()
         self._semaphore = asyncio.Semaphore(config.max_concurrency)
         self._replay_cache: dict[str, tuple[float, Any]] = {}
+        self._replay_evictions = 0
         self._lock = threading.Lock()
         self._retryable = (TimeoutError, asyncio.TimeoutError, ConnectionError, OSError)
 
@@ -183,7 +190,29 @@ class ToolRuntime:
         if self.config.idempotency_ttl_seconds <= 0:
             return
         with self._lock:
-            self._replay_cache[key] = (time.monotonic(), value)
+            now = time.monotonic()
+            self._replay_cache[key] = (now, value)
+            if len(self._replay_cache) <= self.config.max_replay_entries:
+                return
+            # 超过上限时先清过期项；仍超限再按写入顺序淘汰最旧条目，
+            # 使长跑服务的内存占用有界，而不是随参数组合无限增长。
+            ttl = self.config.idempotency_ttl_seconds
+            stale_keys = [k for k, (stored_at, _) in self._replay_cache.items() if now - stored_at > ttl]
+            for stale in stale_keys:
+                self._replay_cache.pop(stale, None)
+            while len(self._replay_cache) > self.config.max_replay_entries:
+                self._replay_cache.pop(next(iter(self._replay_cache)), None)
+                self._replay_evictions += 1
+
+    def replay_cache_stats(self) -> dict[str, Any]:
+        """重放缓存的可观测快照；entries 恒不超过 capacity。"""
+        with self._lock:
+            return {
+                "entries": len(self._replay_cache),
+                "capacity": self.config.max_replay_entries,
+                "evicted": self._replay_evictions,
+                "ttl_seconds": self.config.idempotency_ttl_seconds,
+            }
 
     async def run(
         self,
@@ -196,7 +225,9 @@ class ToolRuntime:
         """执行工具。
 
         ``idempotent=False`` 用于**有状态**工具（会话式 ReAct）：重复调用会改变会话状态，
-        按参数缓存并重放会返回陈旧快照并跳过状态更新，因此这类工具必须绕开重放缓存。
+        按参数缓存并重放会返回陈旧快照并跳过状态更新，因此这类工具必须绕开重放缓存；
+        同理它们也**不参与重试**——超时只代表没等到响应，handler 可能已经执行完毕，
+        重跑会把副作用施加两次。
         """
         key = self.idempotency_key(tool, arguments)
         if idempotent:
@@ -205,6 +236,7 @@ class ToolRuntime:
                 self.metrics.record(tool, 0.0, replayed=True)
                 return replayed
 
+        allow_retry = idempotent and self.config.max_retries > 0
         started = time.perf_counter()
         attempts = 0
         async with self._semaphore:
@@ -213,7 +245,7 @@ class ToolRuntime:
                     result = await asyncio.wait_for(self._invoke(handler), self.config.timeout_seconds)
                 except Exception as error:
                     elapsed = (time.perf_counter() - started) * 1000
-                    if not self._is_retryable(error):
+                    if not allow_retry or not self._is_retryable(error):
                         self.metrics.record(tool, elapsed, error=True, retries=attempts)
                         raise
                     attempts += 1
@@ -558,12 +590,14 @@ def build_server(
                     "max_retries": config.max_retries,
                     "max_concurrency": config.max_concurrency,
                     "idempotency_ttl_seconds": config.idempotency_ttl_seconds,
+                    "max_replay_entries": config.max_replay_entries,
                     "react_max_steps": config.react_max_steps,
                     "session_context_budget": config.session_context_budget,
                     "max_sessions": config.max_sessions,
                     "allow_local_image_path": allow_image,
                 },
                 "metrics": runtime.metrics.snapshot(),
+                "idempotency_cache": runtime.replay_cache_stats(),
                 "active_sessions": len(sessions),
             }
         )
@@ -651,6 +685,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-retries", type=int, default=int(os.getenv("MCP_MAX_RETRIES", "1")))
     parser.add_argument("--max-concurrency", type=int, default=int(os.getenv("MCP_MAX_CONCURRENCY", str(DEFAULT_MAX_CONCURRENCY))))
     parser.add_argument("--idempotency-ttl", type=float, default=float(os.getenv("MCP_IDEMPOTENCY_TTL", str(DEFAULT_IDEMPOTENCY_TTL_SECONDS))))
+    parser.add_argument("--max-replay-entries", type=int, default=int(os.getenv("MCP_MAX_REPLAY_ENTRIES", str(DEFAULT_MAX_REPLAY_ENTRIES))))
     parser.add_argument("--react-max-steps", type=int, default=int(os.getenv("MCP_REACT_MAX_STEPS", "6")))
     parser.add_argument("--session-context-budget", type=int, default=int(os.getenv("MCP_SESSION_CONTEXT_BUDGET", "2048")))
     parser.add_argument("--max-sessions", type=int, default=int(os.getenv("MCP_MAX_SESSIONS", "128")))
@@ -687,6 +722,7 @@ def main() -> None:
         max_retries=args.max_retries,
         max_concurrency=args.max_concurrency,
         idempotency_ttl_seconds=args.idempotency_ttl,
+        max_replay_entries=args.max_replay_entries,
         react_max_steps=args.react_max_steps,
         session_context_budget=args.session_context_budget,
         max_sessions=args.max_sessions,

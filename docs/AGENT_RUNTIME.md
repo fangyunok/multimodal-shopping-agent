@@ -125,6 +125,13 @@ MCP 侧有一个必须处理的冲突：服务端的**幂等重放**会按 `(too
 但会话工具重复调用**本就应该改变状态**——命中重放会返回陈旧快照并跳过状态更新。
 因此 `ToolRuntime.run(..., idempotent=False)` 让有状态工具绕开重放缓存，
 `tests/test_mcp_server.py::test_stateful_react_query_bypasses_the_idempotency_cache` 守着这一点。
+同理，有状态工具**也不参与瞬时故障重试**：超时只说明没等到响应，handler 可能已经执行完毕，
+重跑会把会话状态推进两次，比缓存重放更危险。
+
+重放缓存受 `max_replay_entries` 上限约束（默认 1024）：超出上限时先清过期项，仍超限再淘汰最早写入的条目，
+避免条目数随参数组合在长跑服务中无限增长；`get_runtime_metrics` 的 `idempotency_cache` 给出
+`entries / capacity / evicted`，`tests/test_mcp_server.py::test_replay_cache_is_bounded_and_reports_evictions`
+守着上限不被突破。
 
 会话在服务端按 `session_id` 分片持有，受 `max_sessions` 上限约束（超出按插入顺序淘汰），
 可用 `get_session_state` 读取某个会话的槽位与上下文占用。

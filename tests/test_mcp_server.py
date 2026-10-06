@@ -14,7 +14,7 @@ pytest.importorskip("mcp", reason="MCP server tests need mcp>=2.3")
 
 from mcp import Client
 
-from shopping_agent.mcp_server import ServerConfig, build_server, percentile
+from shopping_agent.mcp_server import ServerConfig, ToolRuntime, build_server, percentile
 from shopping_agent.models import Product
 from shopping_agent.planner import RulePlanner
 from shopping_agent.retrieval import HybridRetriever
@@ -284,3 +284,61 @@ def test_session_eviction_is_bounded_by_max_sessions(tmp_path) -> None:
     assert payload["config"]["max_sessions"] == 2
     assert call(server, "get_session_state", {"session_id": "one"})["exists"] is False
     assert call(server, "get_session_state", {"session_id": "three"})["exists"] is True
+
+
+def test_replay_cache_is_bounded_and_reports_evictions(tmp_path) -> None:
+    server = make_server(tmp_path, max_replay_entries=2)
+    for index in range(5):
+        call(server, "search_products", {"query": f"运动鞋-{index}"})
+
+    cache = call(server, "get_runtime_metrics", {})["idempotency_cache"]
+    # 每个参数组合都会产生一个新的缓存键；没有上限的话条目数会随长跑服务无限增长
+    assert cache["entries"] == 2
+    assert cache["capacity"] == 2
+    assert cache["evicted"] == 3
+
+
+def test_evicted_entry_falls_back_to_real_execution(tmp_path) -> None:
+    server = make_server(tmp_path, max_replay_entries=1)
+    call(server, "search_products", {"query": "运动鞋"})
+    call(server, "search_products", {"query": "双肩包"})
+    call(server, "search_products", {"query": "运动鞋"})
+
+    metrics = call(server, "get_runtime_metrics", {})["metrics"]["tools"]["search_products"]
+    # 第一条已被淘汰，再次调用必须真执行，而不是取到过期结果
+    assert metrics["calls"] == 3
+    assert metrics["replayed"] == 0
+
+
+def test_stateful_tool_is_not_retried_on_transient_failure() -> None:
+    runtime = ToolRuntime(ServerConfig(max_retries=3, timeout_seconds=5))
+    invocations = {"count": 0}
+
+    def flaky() -> str:
+        invocations["count"] += 1
+        raise ConnectionError("瞬时故障")
+
+    async def scenario() -> None:
+        with pytest.raises(ConnectionError):
+            await runtime.run("stateful_tool", {}, flaky, idempotent=False)
+
+    asyncio.run(scenario())
+    # 超时只代表没等到响应，有状态 handler 可能已经执行完毕；重跑会让副作用翻倍
+    assert invocations["count"] == 1
+
+
+def test_read_only_tool_still_retries_transient_failures() -> None:
+    runtime = ToolRuntime(ServerConfig(max_retries=3, timeout_seconds=5, backoff_base_seconds=0.0))
+    invocations = {"count": 0}
+
+    def flaky() -> str:
+        invocations["count"] += 1
+        if invocations["count"] == 1:
+            raise ConnectionError("瞬时故障")
+        return "ok"
+
+    async def scenario() -> str:
+        return await runtime.run("read_only_tool", {}, flaky, idempotent=True)
+
+    assert asyncio.run(scenario()) == "ok"
+    assert invocations["count"] == 2
