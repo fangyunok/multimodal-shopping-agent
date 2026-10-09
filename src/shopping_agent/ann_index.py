@@ -143,12 +143,17 @@ class _NumpyHandle:
         if k <= 0:
             empty = np.empty((queries.shape[0], 0), dtype=np.float32)
             return empty, np.empty((queries.shape[0], 0), dtype=np.int64)
-        # argpartition 是 O(N) 的部分排序；只有入选的 k 条才需要真正排序。
-        partitioned = np.argpartition(-scores, k - 1, axis=1)[:, :k]
-        taken = np.take_along_axis(scores, partitioned, axis=1)
-        order = np.argsort(-taken, axis=1, kind="stable")
-        indices = np.take_along_axis(partitioned, order, axis=1)
-        values = np.take_along_axis(taken, order, axis=1)
+        # 先用 O(N) 的部分排序找到分界分数，再按目录顺序补齐边界上的同分项。
+        # argpartition 不保证同分项顺序；只稳定排序已选的 k 项仍会漏掉更早的商品。
+        thresholds = np.partition(-scores, k - 1, axis=1)[:, k - 1]
+        indices = np.empty((queries.shape[0], k), dtype=np.int64)
+        for row, threshold in enumerate(-thresholds):
+            better = np.flatnonzero(scores[row] > threshold)
+            tied = np.flatnonzero(scores[row] == threshold)[: k - better.size]
+            selected = np.concatenate([better, tied])
+            order = np.lexsort((selected, -scores[row, selected]))
+            indices[row] = selected[order]
+        values = np.take_along_axis(scores, indices, axis=1)
         return values.astype(np.float32), indices.astype(np.int64)
 
     @property
@@ -340,3 +345,4 @@ class AnnIndex:
             "bytes_per_vector": round(self.index_bytes / max(self.count, 1), 1),
             "effective": self.effective,
         }
+

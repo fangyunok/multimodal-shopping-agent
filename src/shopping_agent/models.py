@@ -39,6 +39,7 @@ class SearchRequest(BaseModel):
     max_price: float | None = Field(default=None, ge=0)
     category: str | None = None
     top_k: int = Field(default=5, ge=1, le=20)
+    excluded_product_ids: list[str] = Field(default_factory=list, max_length=1000)
 
 
 class SearchHit(BaseModel):
@@ -60,3 +61,4 @@ class AgentResponse(BaseModel):
     tool_trace: list[dict]
     hits: list[SearchHit] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
+

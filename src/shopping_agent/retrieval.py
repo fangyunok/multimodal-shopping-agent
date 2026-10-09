@@ -69,7 +69,10 @@ class HybridRetriever:
         text_scores = self._text_scores(request.query)
         query_image = image_descriptor(Path(request.image_path)) if request.image_path else None
         hits: list[SearchHit] = []
+        excluded = set(request.excluded_product_ids)
         for product, text_score in zip(self.products, text_scores):
+            if product.id in excluded:
+                continue
             if request.max_price is not None and product.price > request.max_price:
                 continue
             if request.category and request.category.lower() not in product.category.lower():
@@ -95,4 +98,5 @@ class HybridRetriever:
 
 def load_products(path: str | Path) -> list[Product]:
     return [Product.model_validate(item) for item in json.loads(Path(path).read_text(encoding="utf-8"))]
+
 

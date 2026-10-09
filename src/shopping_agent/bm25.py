@@ -310,10 +310,15 @@ class BM25Retriever:
             self.last_stats = {"mode": "rating_fallback", "candidates": 0}
             return self._rank_by_rating(count, request)
 
-        scores, indices = self.index.search(request.query, pool)
-        mask = self._filter_mask(indices, request)
-        kept_indices = indices[mask]
-        kept_scores = scores[mask]
+        ceiling = min(self.max_candidates, self.index.count)
+        while True:
+            scores, indices = self.index.search(request.query, pool)
+            mask = self._filter_mask(indices, request)
+            kept_indices = indices[mask]
+            kept_scores = scores[mask]
+            if len(kept_indices) >= count or pool >= ceiling or len(indices) < pool:
+                break
+            pool = min(ceiling, max(pool + 1, pool * 2))
 
         self.last_stats = {
             "mode": "bm25",
@@ -358,6 +363,9 @@ class BM25Retriever:
         if indices.size == 0:
             return np.zeros(0, dtype=bool)
         mask = np.ones(indices.shape[0], dtype=bool)
+        if request.excluded_product_ids:
+            excluded = set(request.excluded_product_ids)
+            mask &= np.asarray([self.products[int(i)].id not in excluded for i in indices], dtype=bool)
         if request.max_price is not None:
             mask &= self._prices[indices] <= request.max_price
         if request.category:
@@ -367,3 +375,4 @@ class BM25Retriever:
 
     def describe(self) -> dict[str, object]:
         return {**self.index.summary(), "max_candidates": self.max_candidates, "last_stats": dict(self.last_stats)}
+

@@ -6,7 +6,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
@@ -173,7 +174,7 @@ def liveness() -> dict[str, str]:
 
 
 @app.get("/readyz")
-def readiness() -> dict[str, object]:
+def readiness(response: Response) -> dict[str, object]:
     """就绪探针：确认检索器已加载、索引版本可读、会话存储可达。
 
     多副本部署时这三件事任何一件不成立，这个副本都不该接流量。
@@ -203,6 +204,7 @@ def readiness() -> dict[str, object]:
     except Exception as error:  # noqa: BLE001
         healthy = False
         checks["session_store"] = {"reachable": False, "error": f"{type(error).__name__}: {error}"}
+    response.status_code = 200 if healthy else 503
     return {"status": "ready" if healthy else "degraded", "checks": checks}
 
 
@@ -224,6 +226,8 @@ def tool_definitions() -> list[ToolDefinition]:
 
 @app.post("/search", response_model=list[SearchHit])
 def search(request: SearchRequest) -> list[SearchHit]:
+    if request.image_path:
+        raise HTTPException(status_code=400, detail="API 不接受本地图片路径，请使用 /agent/image 上传图片")
     return get_tools().search_products(request)
 
 
@@ -248,7 +252,7 @@ class ChatResponse(BaseModel):
     tool_calls: int
     stop_reason: str
     context: dict
-    conflicts: int = Field(description="会话写入版本冲突次数；持续大于 0 说明调用方的 session_id 路由有问题")
+    conflicts: int = Field(description="成功提交时为 0；版本冲突返回 409，已提交状态保持不变")
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -296,7 +300,18 @@ async def agent_with_image(
     content = await image.read(MAX_IMAGE_BYTES + 1)
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail="图片不能超过 5 MB")
-    suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[image.content_type]
+    # 同步模型、图片处理和临时文件生命周期都放到框架的有界工作线程池。
+    # 客户端取消等待时，工作线程仍负责在执行结束后清理文件。
+    return await run_in_threadpool(
+        _run_uploaded_image, content, image.content_type, query, max_price, category, top_k,
+    )
+
+
+def _run_uploaded_image(
+    content: bytes, content_type: str, query: str,
+    max_price: float | None, category: str | None, top_k: int,
+) -> AgentResponse:
+    suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[content_type]
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp:
@@ -318,3 +333,4 @@ async def agent_with_image(
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
+

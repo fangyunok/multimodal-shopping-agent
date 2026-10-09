@@ -27,7 +27,7 @@ import hashlib
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -155,6 +155,14 @@ class _Job:
         self.enqueued_at = time.perf_counter()
 
 
+class BatchQueueFull(RuntimeError):
+    """编码队列容量已满，调用方应限流或稍后重试。"""
+
+
+class BatcherStopped(RuntimeError):
+    """编码器正在关闭，未开始的任务不再执行。"""
+
+
 class DynamicBatcher:
     """把并发到达的小请求合并成大批次后再送进模型。
 
@@ -171,35 +179,48 @@ class DynamicBatcher:
         max_batch: int = 256,
         max_wait_ms: float = 8.0,
         name: str = "batcher",
+        max_pending_items: int = 1024,
+        queue_timeout_seconds: float = 5.0,
     ) -> None:
         if max_batch < 1:
             raise ValueError("max_batch 必须大于 0")
         if max_wait_ms < 0:
             raise ValueError("max_wait_ms 不能为负")
+        if max_pending_items < 1:
+            raise ValueError("max_pending_items 必须大于 0")
+        if queue_timeout_seconds <= 0:
+            raise ValueError("queue_timeout_seconds 必须大于 0")
         self.encode_fn = encode_fn
         self.max_batch = max_batch
         self.max_wait_ms = max_wait_ms
         self.name = name
+        self.max_pending_items = max_pending_items
+        self.queue_timeout_seconds = queue_timeout_seconds
         self._pending: list[_Job] = []
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._worker = threading.Thread(target=self._loop, name=f"{name}-worker", daemon=True)
-        self._worker.start()
         self.batches = 0
         self.encoded_items = 0
         self.max_observed_batch = 0
+        self.rejected = 0
+        self.expired = 0
+        self._worker.start()
 
     def submit(self, items: Sequence[Any]) -> np.ndarray:
         """阻塞直到本批编码完成。批量超过上限时自动切块。"""
         items = list(items)
+        if self._stop.is_set():
+            raise BatcherStopped("编码器已停止")
         if not items:
             return np.empty((0, 0), dtype=np.float32)
-        chunks = [items[start : start + self.max_batch] for start in range(0, len(items), self.max_batch)]
+        chunk_size = min(self.max_batch, self.max_pending_items)
+        chunks = [items[start : start + chunk_size] for start in range(0, len(items), chunk_size)]
         results: list[np.ndarray] = []
         if len(chunks) == 1:
             return self._submit_one(items)
-        # 超大请求不占用批处理窗口，直接同步算，避免把其他请求一起堵住。
+        # 超大请求逐块排队，让其他请求有机会在块与块之间得到处理。
         for chunk in chunks:
             results.append(self._submit_one(chunk))
         return np.concatenate(results, axis=0)
@@ -207,9 +228,23 @@ class DynamicBatcher:
     def _submit_one(self, items: list[Any]) -> np.ndarray:
         job = _Job(items)
         with self._lock:
+            if self._stop.is_set():
+                raise BatcherStopped("编码器已停止")
+            if sum(len(pending.items) for pending in self._pending) + len(items) > self.max_pending_items:
+                self.rejected += 1
+                raise BatchQueueFull("编码队列已满")
             self._pending.append(job)
         self._wake.set()
-        return job.future.result()
+        try:
+            return job.future.result(timeout=self.queue_timeout_seconds)
+        except FutureTimeout:
+            with self._lock:
+                if job.future.cancel():
+                    self._pending = [pending for pending in self._pending if pending is not job]
+                    self.expired += 1
+                    raise TimeoutError("编码任务排队超时") from None
+            # 已开始的本地模型前向不能强制终止；等待结束以保护图片文件等资源的生命周期。
+            return job.future.result()
 
     def _take(self, capacity: int) -> list[_Job]:
         """按剩余容量取任务：**严格不超过 ``max_batch``**。
@@ -224,12 +259,16 @@ class DynamicBatcher:
             leftover: list[_Job] = []
             budget = capacity
             for job in self._pending:
+                if job.future.cancelled():
+                    continue
                 if len(job.items) <= budget:
                     taken.append(job)
                     budget -= len(job.items)
                 else:
                     leftover.append(job)
             self._pending = leftover
+            if leftover:
+                self._wake.set()
             return taken
 
     def _loop(self) -> None:
@@ -251,28 +290,46 @@ class DynamicBatcher:
                 jobs.extend(more)
                 total += sum(len(job.items) for job in more)
             self._run(jobs)
+            # Event 会合并多次通知；队列仍有任务时必须自行继续排空。
+            with self._lock:
+                if self._pending:
+                    self._wake.set()
 
     def _run(self, jobs: list[_Job]) -> None:
+        with self._lock:
+            if self._stop.is_set():
+                for job in jobs:
+                    if not job.future.done():
+                        job.future.set_exception(BatcherStopped("编码器已停止"))
+                return
+            jobs = [job for job in jobs if job.future.set_running_or_notify_cancel()]
+        if not jobs:
+            return
         flat: list[Any] = []
         for job in jobs:
             flat.extend(job.items)
         try:
-            vectors = self.encode_fn(flat)
+            vectors = np.asarray(self.encode_fn(flat), dtype=np.float32)
+            if vectors.ndim != 2 or vectors.shape[0] != len(flat):
+                raise ValueError("编码结果的行数必须与输入条数一致，且结果必须为二维向量")
         except Exception as error:  # noqa: BLE001 - 异常必须逐请求传播，不能只打日志
             for job in jobs:
                 job.future.set_exception(error)
             return
-        vectors = np.asarray(vectors, dtype=np.float32)
+        with self._lock:
+            self.batches += 1
+            self.encoded_items += len(flat)
+            self.max_observed_batch = max(self.max_observed_batch, len(flat))
         cursor = 0
         for job in jobs:
             size = len(job.items)
             job.future.set_result(vectors[cursor : cursor + size])
             cursor += size
-        self.batches += 1
-        self.encoded_items += len(flat)
-        self.max_observed_batch = max(self.max_observed_batch, len(flat))
 
     def stats(self) -> dict[str, float | int]:
+        with self._lock:
+            pending_items = sum(len(job.items) for job in self._pending)
+            pending_jobs = len(self._pending)
         return {
             "batches": self.batches,
             "encoded_items": self.encoded_items,
@@ -280,10 +337,21 @@ class DynamicBatcher:
             "max_observed_batch": self.max_observed_batch,
             "max_batch": self.max_batch,
             "max_wait_ms": self.max_wait_ms,
+            "pending_items": pending_items,
+            "pending_jobs": pending_jobs,
+            "max_pending_items": self.max_pending_items,
+            "queue_timeout_seconds": self.queue_timeout_seconds,
+            "rejected": self.rejected,
+            "expired": self.expired,
         }
 
     def stop(self) -> None:
-        self._stop.set()
+        with self._lock:
+            self._stop.set()
+            pending, self._pending = self._pending, []
+            for job in pending:
+                if not job.future.done():
+                    job.future.set_exception(BatcherStopped("编码器已停止，排队任务已取消"))
         self._wake.set()
 
 
@@ -296,11 +364,17 @@ class CachedEncoder:
         cache: EmbeddingCache | None = None,
         max_batch: int = 256,
         max_wait_ms: float = 8.0,
+        max_pending_items: int = 1024,
+        queue_timeout_seconds: float = 5.0,
     ) -> None:
         self.encoder = encoder
         self.cache = cache or EmbeddingCache()
-        self.text_batcher = DynamicBatcher(self.encoder.encode_texts, max_batch, max_wait_ms, "text")
-        self.image_batcher = DynamicBatcher(self.encoder.encode_images, max_batch, max_wait_ms, "image")
+        self.text_batcher = DynamicBatcher(
+            self.encoder.encode_texts, max_batch, max_wait_ms, "text", max_pending_items, queue_timeout_seconds,
+        )
+        self.image_batcher = DynamicBatcher(
+            self.encoder.encode_images, max_batch, max_wait_ms, "image", max_pending_items, queue_timeout_seconds,
+        )
 
     def encode_texts(self, texts: Sequence[str]) -> np.ndarray:
         texts = list(texts)
@@ -403,3 +477,4 @@ __all__ = [
     "image_key",
     "text_key",
 ]
+

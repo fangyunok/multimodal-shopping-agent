@@ -27,6 +27,7 @@ clip = ["torch>=2.3,<3", "transformers>=4.46,<4.52"]
 ann = ["faiss-cpu>=1.8,<2"]
 # 多副本部署：会话外置到 Redis。
 redis = ["redis>=5,<7"]
+service = ["httpx>=0.27,<1", "redis>=5,<7"]
 # 一次性装齐"能跑大规模 + 能水平扩展"
 scale = [
   "faiss-cpu>=1.8,<2",
@@ -48,3 +49,4 @@ shopping_agent = ["static/*.html"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+

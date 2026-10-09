@@ -191,6 +191,8 @@ class RuleReasoner:
 
         if not searches:
             arguments: dict[str, Any] = {"query": context.query, "top_k": self.max_candidates}
+            if context.state.excluded_product_ids:
+                arguments["excluded_product_ids"] = list(context.state.excluded_product_ids)
             if context.state.max_price is not None:
                 arguments["max_price"] = context.state.max_price
             if context.state.category is not None:
@@ -213,7 +215,10 @@ class RuleReasoner:
                 answer="检索服务暂时不可用，请稍后重试，或换一种描述方式。",
             )
 
-        candidates = self._candidates(searches[-1].payload)
+        candidates = [
+            candidate for candidate in self._candidates(searches[-1].payload)
+            if candidate["product_id"] not in context.state.excluded_product_ids
+        ]
         if not candidates:
             relaxation = "放宽预算" if context.state.max_price is not None else "换一种描述"
             return Decision(
@@ -445,3 +450,4 @@ class ReActAgent:
 def estimate_prompt_tokens(result: ReActResult) -> int:
     """整个轨迹的 token 估算，用于对比压缩收益。"""
     return sum(estimate_tokens(json.dumps(step.model_dump(), ensure_ascii=False, default=str)) for step in result.steps)
+

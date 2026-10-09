@@ -79,6 +79,29 @@ def test_compare_intent_reuses_remembered_candidates() -> None:
     assert result.stop_reason == "final_answer"
 
 
+def test_excluded_product_is_absent_from_search_answer_and_follow_up() -> None:
+    agent = make_agent()
+    agent.run("白色通勤运动鞋")
+    result = agent.run("不要 shoe-001，还是找白色通勤运动鞋")
+    assert "shoe-001" in agent.session.state.excluded_product_ids
+    assert "shoe-001" not in result.answer
+    assert "shoe-001" not in result.citations
+    assert "shoe-001" not in agent.session.state.last_candidates
+    follow_up = agent.run("有货吗")
+    assert "shoe-001" not in follow_up.answer
+    assert follow_up.steps[0].arguments["product_id"] != "shoe-001"
+
+
+def test_empty_search_clears_previous_candidates() -> None:
+    agent = make_agent()
+    agent.run("运动鞋")
+    agent.run("预算 1 元以内的运动鞋")
+    assert agent.session.state.last_candidates == []
+    result = agent.run("有货吗")
+    assert result.tool_calls == 0
+    assert "商品 ID" in result.answer
+
+
 def test_inventory_intent_without_context_asks_for_clarification() -> None:
     result = make_agent().run("这个有货吗", intent="inventory")
     assert result.stop_reason == "final_answer"
@@ -132,3 +155,4 @@ def test_trace_is_compatible_with_agent_tool_trace() -> None:
     assert trace[0]["tool"] == "search_products"
     assert all({"step", "tool", "arguments"} <= set(item) for item in trace)
     assert "error" not in trace[0]
+

@@ -265,6 +265,10 @@ class SessionMemory:
             self.merge_plan(plan)
         self._absorb_exclusions(query)
         self._absorb_product_ids(query)
+        self.state.last_candidates = [
+            product_id for product_id in self.state.last_candidates
+            if product_id not in self.state.excluded_product_ids
+        ]
 
     def merge_plan(self, plan: Plan) -> None:
         """新值覆盖旧值，未提及的约束继承——这是多轮指代消解的核心规则。"""
@@ -282,9 +286,12 @@ class SessionMemory:
         text = render(payload)
         self.turns.append(Turn(role="observation", content=f"[{tool}] {text}", tool=tool, step=step))
         product_ids = _product_ids_of(payload)
-        if tool == "search_products" and product_ids:
+        if tool == "search_products":
             # 检索结果按相关性排序，单独留一份供后续“有货吗 / 对比”这类追问直接复用。
-            self.state.last_candidates = product_ids
+            self.state.last_candidates = [
+                product_id for product_id in product_ids
+                if product_id not in self.state.excluded_product_ids
+            ]
         self._absorb_product_ids(text)
 
     def record_answer(self, text: str) -> None:
@@ -417,3 +424,4 @@ class SessionMemory:
         for product_id in PRODUCT_ID_PATTERN.findall(text or ""):
             if product_id not in self.state.seen_product_ids:
                 self.state.seen_product_ids.append(product_id)
+

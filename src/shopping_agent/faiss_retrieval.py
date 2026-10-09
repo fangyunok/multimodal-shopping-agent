@@ -422,6 +422,9 @@ class FaissRetriever:
             return np.zeros(0, dtype=bool)
         mask = (indices >= 0) & (indices < self.ann.count)
         safe = np.where(mask, indices, 0)
+        if request.excluded_product_ids:
+            excluded = set(request.excluded_product_ids)
+            mask &= np.asarray([self.products[int(i)].id not in excluded for i in safe], dtype=bool)
         if request.max_price is not None:
             mask &= self._prices[safe] <= request.max_price
         if request.category:
@@ -441,3 +444,4 @@ class FaissRetriever:
             "exact_fallback": self.exact_vectors is not None,
             "last_stats": dict(self.last_stats),
         }
+

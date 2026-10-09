@@ -100,7 +100,7 @@ def test_open_session_does_not_persist_on_exception() -> None:
     assert store.load("s-9").version == 0, "失败的一轮不应落盘"
 
 
-def test_handle_retries_after_conflict_and_counts_it() -> None:
+def test_handle_rejects_conflict_and_preserves_committed_state() -> None:
     store = InMemorySessionStore()
     handle = SessionHandle(store, "s-1")
     memory = handle.__enter__()
@@ -108,13 +108,19 @@ def test_handle_retries_after_conflict_and_counts_it() -> None:
     # 模拟另一个副本抢先写入，把版本推进到 1。
     other = store.load("s-1")
     other.begin_turn("别人的一轮")
+    other.state.max_price = 300
     assert store.save(other) is True
-    handle.__exit__(None, None, None)
+    with pytest.raises(SessionConflict):
+        handle.__exit__(None, None, None)
     assert handle.conflicts == 1, "冲突必须被计数，而不是悄悄重试"
-    assert store.load("s-1").version == 2
+    saved = store.load("s-1")
+    assert saved.version == 1
+    assert saved.state.max_price == 300
+    assert [turn.content for turn in saved.turns] == ["别人的一轮"]
+    assert memory.version == 0, "不能借用最新版本号重写陈旧快照"
 
 
-def test_handle_raises_when_retries_are_exhausted() -> None:
+def test_handle_rejects_conflict_even_with_legacy_retry_argument() -> None:
     class AlwaysStaleStore(InMemorySessionStore):
         def save(self, memory: SessionMemory) -> bool:  # noqa: D102
             return False
@@ -221,3 +227,4 @@ def test_redis_store_validates_ttl() -> None:
     with pytest.raises(ValueError) as error:
         RedisSessionStore("redis://stub/0", ttl_seconds=0, client=FakeRedis())
     assert "ttl_seconds" in str(error.value)
+

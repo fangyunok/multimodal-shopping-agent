@@ -36,7 +36,7 @@
 | `GET /index` | 当前索引版本、可回滚版本列表 | 发布后确认、排查"是不是发了旧版本" |
 | `GET /metrics` | 编码服务的缓存命中率、平均批次大小 | 编码服务专用 |
 
-**为什么两个探针必须分开。** Redis 挂了的时候，`/readyz` 应该返回 degraded 让流量绕开这个副本；
+**为什么两个探针必须分开。** Redis 挂了的时候，`/readyz` 返回 HTTP 503 和 `degraded`，让流量绕开这个副本；
 但如果把它接到存活探针上，编排系统会**不断重启进程**——而重启一个没坏的进程治不好一个挂掉的 Redis，
 只会让情况更糟（所有副本反复重启、连接风暴）。
 
@@ -58,8 +58,11 @@ docker compose up --build
 docker compose up --build --scale shopping-agent=3
 ```
 
-Compose 里已经配好 `SESSION_BACKEND=redis` 与 `REDIS_URL`，并且 `depends_on: condition: service_healthy`——
-检索副本会等 Redis 真正能 `PING` 通了才启动，避免启动瞬间 `/readyz` 全红。
+Compose 构建镜像时安装 `redis` 可选依赖，并配置 `SESSION_BACKEND=redis` 与 `REDIS_URL`。
+检索副本等待 Redis 健康检查通过后启动。只有 HAProxy 网关绑定宿主机的 8010 端口，
+检索副本使用容器内部的 8000 端口，扩副本时不会发生宿主机端口冲突。
+网关通过 Docker DNS 动态发现最多 10 个副本，并检查各副本 `/readyz`：连续两次失败摘流，
+恢复一次成功重新接流量。检测期间存在约数秒的窗口，不保证下游故障瞬间所有请求均成功。
 
 要启用 ANN 后端，镜像需要带 faiss：
 
@@ -79,9 +82,21 @@ curl -s -X POST localhost:8010/chat -H 'Content-Type: application/json' \
   -d '{"session_id":"s-demo","query":"有货吗"}'
 ```
 
-第二轮能接上一轮的上下文（`context.kept_turns` 递增），说明状态在 Redis 而不是在某个副本的内存里。
-响应里的 `conflicts` 字段是**版本冲突计数**——正常应为 0；持续 >0 说明同一个 `session_id`
-在被多个客户端并发驱动，正确修法是在网关按 `session_id` 做一致性路由，而不是调大重试次数。
+网关上的两次调用用于体验；严格验证跨副本应直接指定不同容器，CI 的
+`scripts/smoke_compose.py` 会这样验证。成功响应的 `conflicts` 为 0，版本冲突直接返回 409，
+本次结果不提交，调用方应读取最新状态后重新决策。同会话的一致性路由不等于串行执行。
+
+隔离部署验收（脚本会临时停止并恢复测试栈 Redis）：
+
+```bash
+export COMPOSE_PROJECT_NAME=stability-local
+docker compose up --build -d --scale shopping-agent=3
+python scripts/smoke_compose.py --replicas 3
+docker compose down --volumes --remove-orphans
+```
+
+脚本验证三个副本、跨副本会话、Redis 故障时就绪 503 / 存活 200、网关摘流及恢复。
+CI 自动清理测试栈；本地发生失败时也应执行最后一条清理命令。
 
 ---
 
@@ -131,6 +146,8 @@ curl -s -X POST localhost:8010/chat -H 'Content-Type: application/json' \
 | `ENCODER_DEVICE` | `cuda:0`（有则用） | 编码服务侧 |
 | `ENCODER_MAX_BATCH` | `256` | 动态批处理上限 |
 | `ENCODER_MAX_WAIT_MS` | `8` | 攒批最长等待；高 QPS 下攒得满，低 QPS 下不拖尾 |
+| `ENCODER_MAX_PENDING_ITEMS` | `1024` | 每个编码队列的待处理条目上限；超过返回 503 |
+| `ENCODER_QUEUE_TIMEOUT_SECONDS` | `5` | 未开始执行的排队任务最长等待，超时取消并返回 504 |
 | `EMBEDDING_CACHE_SIZE` | `4096` | 进程内 LRU 容量 |
 
 ---
@@ -164,8 +181,10 @@ GET  /healthz                                 -> 编码器与批处理统计
 
 ### 批处理与缓存
 
-- `DynamicBatcher`：多个请求的编码任务合并成一批提交给模型。低 QPS 时等 `max_wait_ms` 就走，
-  不会为了攒批把单请求尾延迟拖到几百毫秒；高 QPS 时自然攒满 `max_batch`。
+- `DynamicBatcher`：多个请求合成一批，队列还有任务时持续排空。容量上限约束等待条目数，
+  排队超时后取消尚未运行的任务。关闭时唤醒排队调用方，拒绝新任务。
+  **排队超时不是模型执行超时**：已经开始的本地模型前向会运行到结束，以保证图片等输入资源仍然有效。
+  远端编码调用另有网络超时；需要强制终止模型时应进一步使用进程隔离。
 - `EmbeddingCache`：两级缓存（进程内 LRU + 可选 Redis）。电商场景里"同一本书被反复搜"很常见，
   命中缓存直接省掉一次前向。
 
@@ -279,8 +298,8 @@ python -m shopping_agent.cli --apply-changes data/changes/2026-10-05.jsonl \
 | 现象 | 可能原因 | 处置 |
 | --- | --- | --- |
 | `/readyz` 报 `session_store.reachable=false` | Redis 不通 | 修 Redis；流量会被就绪探针自动摘掉，不用重启进程 |
-| `/chat` 返回 409 | 同一 `session_id` 被并发驱动 | 网关按 `session_id` 做一致性路由；不是靠加重试解决 |
-| `/chat` 响应里 `conflicts>0` | 同上，但重试成功了 | 观察是否持续；持续出现说明路由有问题 |
+| `/chat` 返回 409 | 计算期间会话被另一请求更新 | 保留已提交状态，重新读取后决策；需要严格顺序时按会话串行覆盖整个读取—执行—提交过程 |
+| 编码服务返回 503 / 504 | 队列容量耗尽 / 等待超时 | 查看 `pending_items`、`rejected`、`expired`，降低入口并发或扩充编码容量 |
 | 召回明显偏低 | `ef_search` / `nprobe` 配小了 | 热调大这两个值，先不动索引 |
 | 内存超限 | IVF/HNSW 都是**不压缩**的 | 换 `ivfpq`（约 1/10 体积），代价是召回下降；见 `docs/SCALING.md` 实测 |
 | 启动即失败、报维度不一致 | 索引清单与 `ANN_DIMENSION` 对不上 | 以清单为准；清单是唯一事实来源 |
@@ -298,3 +317,4 @@ python -m shopping_agent.cli --apply-changes data/changes/2026-10-05.jsonl \
    这个数字在业务上通常不可接受，所以 PQ 只在"内存真的放不下"时才用，而不是默认。
 3. **编码服务不要跟着检索副本一起扩**。它是 GPU 侧瓶颈，扩检索副本只会让它排队更长。
    检索副本的扩容依据是 QPS 与延迟，编码服务的扩容依据是 GPU 利用率与队列长度。
+

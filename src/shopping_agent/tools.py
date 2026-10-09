@@ -43,7 +43,9 @@ class ShoppingTools:
         self.by_id = {product.id: product for product in retriever.products}
 
     def search_products(self, request: SearchRequest) -> list[SearchHit]:
-        return self.retriever.search(request)
+        excluded = set(request.excluded_product_ids)
+        # 工具出口再次校验；替换检索后端时也不能泄漏已排除的商品。
+        return [hit for hit in self.retriever.search(request) if hit.product.id not in excluded]
 
     def compare_products(self, product_ids: list[str]) -> list[Product]:
         return [self.by_id[product_id] for product_id in product_ids if product_id in self.by_id]
@@ -85,3 +87,4 @@ class ShoppingTools:
                 parameters=ProductIdInput.model_json_schema(),
             ),
         ]
+
