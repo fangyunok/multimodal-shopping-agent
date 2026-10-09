@@ -26,6 +26,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, Field, ValidationError
 
 from .planner import RulePlanner
+from .models import SearchRequest
 from .session import ContextBudget, SessionMemory, SessionState, estimate_tokens
 from .tools import ShoppingTools, ToolCall, UnknownToolError
 
@@ -64,6 +65,7 @@ class DecisionContext(BaseModel):
     observations: list[Observation]
     step: int
     max_steps: int
+    history: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ReActStep(BaseModel):
@@ -149,6 +151,8 @@ class RuleReasoner:
     策略：检索 → 逐个校验候选库存 → 在可用候选里收口。不依赖任何外部模型，
     因此在 CPU 干净克隆上也能复现完整的多步轨迹；LLM 决策器可平替。
     """
+
+    backend = "rule"
 
     def __init__(self, max_candidates: int = 3) -> None:
         self.max_candidates = max_candidates
@@ -246,12 +250,16 @@ class RuleReasoner:
 
         available = self._available(candidates, inventories)
         if not available:
+            if any(not item.ok for item in inventories):
+                return Decision(thought="部分库存检查失败，不能把未知库存当成无货。",
+                                answer="已找到相关商品，但暂时无法确认可用库存，请稍后重试。")
             return Decision(
                 thought="候选都已校验且全部无货，收口并给出降级建议。",
                 answer="检索到了相关商品，但目前都没有库存，建议放宽预算或换一个类目。",
             )
 
-        return Decision(thought="候选库存校验完成，在可用商品里收口。", answer=self._compose(candidates, available))
+        return Decision(thought="候选库存校验完成，在可用商品里收口。",
+                        answer=self._compose(candidates, available, inventories))
 
 
     # ---------- 内部 ----------
@@ -270,6 +278,9 @@ class RuleReasoner:
 
     @staticmethod
     def _compare_outcome(observation: Observation) -> Decision:
+        if not observation.ok:
+            return Decision(thought="对比工具不可用，不能引用未确认库存。",
+                            answer="对比服务暂时不可用，当前无法确认商品库存，请稍后重试。")
         products = observation.payload if observation.ok else None
         if not isinstance(products, list) or len(products) < 2:
             return Decision(thought="有效商品不足两个，收口并提示。", answer="请至少提供两个有效商品 ID 进行对比。")
@@ -297,11 +308,15 @@ class RuleReasoner:
         return [candidate for candidate in candidates if candidate["product_id"] in in_stock]
 
     @staticmethod
-    def _compose(candidates: list[dict[str, Any]], available: list[dict[str, Any]]) -> str:
+    def _compose(candidates: list[dict[str, Any]], available: list[dict[str, Any]],
+                 inventories: list[Observation] | None = None) -> str:
         available_ids = {candidate["product_id"] for candidate in available}
+        unavailable_ids = {item.arguments.get("product_id") for item in inventories or []
+                           if item.ok and isinstance(item.payload, dict) and item.payload.get("stock") == 0}
         lines: list[str] = []
         for candidate in candidates:
-            mark = "有货" if candidate["product_id"] in available_ids else "无货"
+            mark = ("有货" if candidate["product_id"] in available_ids else
+                    "无货" if candidate["product_id"] in unavailable_ids else "库存未知")
             lines.append(
                 f"{candidate['title']} [{candidate['product_id']}]：¥{candidate['price']:g}，"
                 f"评分 {candidate['rating']:.1f}，{mark}"
@@ -354,6 +369,7 @@ class ReActAgent:
                 observations=list(observations),
                 step=index,
                 max_steps=self.max_steps,
+                history=window.messages,
             )
             decision = self.reasoner.decide(context)
 
@@ -388,7 +404,7 @@ class ReActAgent:
                     index=index,
                     thought=decision.thought,
                     action=decision.action,
-                    arguments=decision.arguments,
+                    arguments=observation.arguments,
                     observation=observation.payload,
                     error=error,
                     latency_ms=round(latency_ms, 3),
@@ -403,7 +419,12 @@ class ReActAgent:
         if answer:
             self.session.record_answer(answer)
 
-        citations = self._citations(observations)
+        citations = [product_id for product_id in self._citations(observations)
+                     if f"[{product_id}]" in answer and product_id not in self.session.state.excluded_product_ids]
+        stats = window.stats()
+        stats.update({"reasoner_backend": getattr(self.reasoner, "backend", "custom"),
+                      "fallback_used": bool(getattr(self.reasoner, "fallback_used", False)),
+                      "inventory_source": self.tools.inventory.source})
         return ReActResult(
             answer=answer,
             intent=resolved_intent,
@@ -411,7 +432,7 @@ class ReActAgent:
             citations=citations,
             stop_reason=stop_reason,
             tool_calls=sum(1 for step in steps if step.action),
-            context=window.stats(),
+            context=stats,
         )
 
     # ---------- 内部 ----------
@@ -424,6 +445,7 @@ class ReActAgent:
     def _execute(self, action: str, arguments: dict[str, Any], index: int) -> tuple[Observation, str | None]:
         """执行工具并把异常翻译成结构化错误——失败是观察的一部分，不是循环的终点。"""
         try:
+            arguments = self._constrain(action, arguments)
             payload = self.tools.execute(ToolCall(name=action, arguments=arguments))
         except ValidationError:
             return Observation(step=index, tool=action, arguments=arguments, error="invalid_arguments"), "invalid_arguments"
@@ -431,16 +453,53 @@ class ReActAgent:
             return Observation(step=index, tool=action, arguments=arguments, error="not_found"), "not_found"
         except UnknownToolError:
             return Observation(step=index, tool=action, arguments=arguments, error="unknown_tool"), "unknown_tool"
+        except PermissionError:
+            return Observation(step=index, tool=action, arguments=arguments, error="constraint_violation"), "constraint_violation"
         except Exception as error:  # 兜底：任何工具异常都不得中断循环
-            return Observation(step=index, tool=action, arguments=arguments, error=f"tool_failure: {error}"), "tool_failure"
+            return Observation(step=index, tool=action, arguments=arguments, error="tool_failure"), "tool_failure"
         return Observation(step=index, tool=action, arguments=arguments, payload=payload), None
+
+    def _constrain(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        state = self.session.state
+        if action == "search_products":
+            request = SearchRequest.model_validate(arguments)
+            if request.image_path:
+                raise PermissionError("模型不能读取本地文件")
+            prices = [price for price in (request.max_price, state.max_price) if price is not None]
+            return request.model_copy(update={
+                "max_price": min(prices) if prices else None,
+                "category": state.category or request.category,
+                "top_k": min(request.top_k, 3),
+                "excluded_product_ids": sorted(set(request.excluded_product_ids + state.excluded_product_ids)),
+            }).model_dump()
+        if action in {"check_inventory", "compare_products"}:
+            # 参数类型仍由工具 Schema 校验；这里只校验模型不能放宽的业务边界。
+            ids = [arguments.get("product_id")] if action == "check_inventory" else arguments.get("product_ids", [])
+            if not isinstance(ids, list) or any(not isinstance(item, str) for item in ids):
+                return arguments
+            for product_id in ids:
+                product = self.tools.by_id.get(product_id)
+                if product_id in state.excluded_product_ids or (product and (
+                    (state.max_price is not None and product.price > state.max_price)
+                    or (state.category and product.category != state.category)
+                )):
+                    raise PermissionError("工具目标违反会话约束")
+        return arguments
 
     def _citations(self, observations: list[Observation]) -> list[str]:
         citations: list[str] = []
         for item in observations:
-            if item.tool != "search_products" or not item.ok:
+            if not item.ok:
                 continue
-            for candidate in extract_candidates(item.payload, limit=10):
+            if item.tool == "search_products":
+                candidates = extract_candidates(item.payload, limit=10)
+            elif item.tool == "check_inventory" and isinstance(item.payload, dict):
+                candidates = [item.payload]
+            elif item.tool == "compare_products" and isinstance(item.payload, list):
+                candidates = [_product_fields(product) for product in item.payload]
+            else:
+                candidates = []
+            for candidate in candidates:
                 product_id = candidate["product_id"]
                 if product_id not in citations:
                     citations.append(product_id)

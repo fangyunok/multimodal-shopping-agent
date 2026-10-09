@@ -61,4 +61,5 @@ class AgentResponse(BaseModel):
     tool_trace: list[dict]
     hits: list[SearchHit] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
+    inventory_source: str = "catalog_demo"
 

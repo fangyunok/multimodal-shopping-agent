@@ -35,6 +35,16 @@ jobs:
           tags: multimodal-shopping-agent:local
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Generate isolated test credentials
+        run: |
+          python - <<'PY'
+          import json, os, secrets
+          keys = {name: secrets.token_urlsafe(32) for name in ("client-a", "client-b")}
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write("AUTH_MODE=api_key\nAPI_KEYS_JSON=" + json.dumps(keys) + "\n")
+          for token in keys.values():
+              print("::add-mask::" + token)
+          PY
       - name: Start isolated multi-replica stack
         run: docker compose -p stability-ci up --no-build -d --scale shopping-agent=3
       - name: Verify sessions, readiness and recovery

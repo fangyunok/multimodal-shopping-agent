@@ -6,18 +6,21 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from starlette.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
 from .agent import ShoppingAgent
+from .auth import auth_config, identify, session_key
+from .inventory import InventoryUnavailable, inventory_from_env
+from .llm_reasoner import LLMReasoner
 from .fusion_retrieval import ScoreFusionRetriever
 from .llm_planner import LLMPlanner
 from .models import AgentRequest, AgentResponse, SearchHit, SearchRequest
 from .planner import RulePlanner
-from .react import ReActAgent
+from .react import ReActAgent, RuleReasoner
 from .retrieval import HybridRetriever
 from .semantic_retrieval import SemanticRetriever
 from .session import ContextBudget
@@ -96,7 +99,7 @@ def get_tools() -> ShoppingTools:
             retriever = FaissRetriever.from_index(
                 catalog, index_dir, encoder, model_name, config, **ann_runtime_kwargs()
             )
-        return ShoppingTools(retriever)
+        return ShoppingTools(retriever, inventory_from_env(retriever.products))
     if backend in {"clip", "fusion"}:
         model_name = os.getenv("CLIP_MODEL", "OFA-Sys/chinese-clip-vit-base-patch16")
         encoder = build_encoder()
@@ -110,10 +113,25 @@ def get_tools() -> ShoppingTools:
             retriever = ScoreFusionRetriever(
                 HybridRetriever.from_jsonl(catalog), retriever, float(os.getenv("LEXICAL_WEIGHT", "0.65"))
             )
-        return ShoppingTools(retriever)
+        return ShoppingTools(retriever, inventory_from_env(retriever.products))
     if backend != "baseline":
         raise ValueError(f"不支持的 RETRIEVER_BACKEND: {backend}")
-    return ShoppingTools(HybridRetriever.from_jsonl(catalog))
+    retriever = HybridRetriever.from_jsonl(catalog)
+    return ShoppingTools(retriever, inventory_from_env(retriever.products))
+
+
+def get_reasoner():
+    # 每个 HTTP 请求独立，模型故障状态不会跨会话污染。
+    backend = os.getenv("REASONER_BACKEND", "rule").lower()
+    if backend == "rule":
+        return RuleReasoner()
+    if backend != "llm" or not os.getenv("LLM_BASE_URL") or not os.getenv("LLM_MODEL"):
+        raise ValueError("REASONER_BACKEND 必须为 rule 或已配置地址和模型的 llm")
+    return LLMReasoner(
+        os.environ["LLM_BASE_URL"], os.environ["LLM_MODEL"], os.getenv("LLM_API_KEY", ""),
+        timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "10")),
+        max_input_tokens=int(os.getenv("LLM_MAX_INPUT_TOKENS", "8192")),
+    )
 
 
 @lru_cache
@@ -149,6 +167,27 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 
+@app.middleware("http")
+async def authenticate(request: Request, call_next):
+    if request.url.path in {"/", "/healthz", "/readyz"}:
+        return await call_next(request)
+    try:
+        mode, keys = auth_config()
+    except ValueError:
+        return JSONResponse(status_code=503, content={"detail": "服务鉴权配置无效"})
+    principal = "demo" if mode == "demo" else identify(request.headers.get("Authorization", ""), keys)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "需要有效的访问令牌"},
+                            headers={"WWW-Authenticate": "Bearer"})
+    request.state.principal = principal
+    return await call_next(request)
+
+
+@app.exception_handler(InventoryUnavailable)
+async def inventory_unavailable(request: Request, error: InventoryUnavailable):
+    return JSONResponse(status_code=503, content={"detail": "库存服务暂时不可用，当前库存未知"})
+
+
 @app.get("/", include_in_schema=False)
 def demo_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -182,9 +221,17 @@ def readiness(response: Response) -> dict[str, object]:
     checks: dict[str, object] = {}
     healthy = True
     try:
+        mode, _ = auth_config()
+        checks["auth"] = {"mode": mode, "ok": True}
+        checks["reasoner"] = {"backend": get_reasoner().backend, "configured": True}
+    except ValueError:
+        healthy = False
+        checks["configuration"] = {"ok": False}
+    try:
         tools = get_tools()
         retriever = tools.retriever
         checks["retriever"] = {"products": len(retriever.products), "ok": True}
+        checks["inventory"] = {"source": tools.inventory.source, "live_check": False}
         # 带 vectors.npy 的索引才有精确兜底能力，这是极端过滤下的正确性保障。
         describe = getattr(retriever, "describe", None)
         if callable(describe):
@@ -241,7 +288,7 @@ def agent(request: AgentRequest) -> AgentResponse:
 class ChatRequest(BaseModel):
     model_config = {"extra": "forbid"}
     session_id: str = Field(min_length=1, max_length=128, description="调用方自带的会话标识")
-    query: str = Field(min_length=1, description="本轮用户输入")
+    query: str = Field(min_length=1, max_length=4000, description="本轮用户输入")
     intent: Literal["auto", "search", "compare", "inventory"] = "auto"
 
 
@@ -253,22 +300,28 @@ class ChatResponse(BaseModel):
     stop_reason: str
     context: dict
     conflicts: int = Field(description="成功提交时为 0；版本冲突返回 409，已提交状态保持不变")
+    citations: list[str] = Field(default_factory=list)
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> ChatResponse:
+def chat(request: ChatRequest, http_request: Request) -> ChatResponse:
     """多轮会话接口：会话状态存在外部存储里，因此本进程**无状态**。
 
     这是阶段二的关键接口。同一个 session_id 的连续请求可以落到任意副本上，
-    状态由 SessionStore 保证一致；写入用版本化 CAS，冲突会体现在 conflicts 字段里
-    而不是静默覆盖。
+    状态由 SessionStore 保证一致；写入用版本化 CAS，冲突返回 409。
     """
     budget = ContextBudget(max_tokens=int(os.getenv("CONTEXT_BUDGET", "2048")))
-    handle = SessionHandle(get_session_store(), request.session_id, budget)
+    key = session_key(http_request.state.principal, request.session_id)
+    handle = SessionHandle(get_session_store(), key, budget)
+    try:
+        reasoner = get_reasoner()
+    except ValueError:
+        raise HTTPException(status_code=503, detail="多轮决策配置无效") from None
     try:
         with handle as memory:
             agent = ReActAgent(
                 get_tools(),
+                reasoner=reasoner,
                 max_steps=int(os.getenv("MAX_STEPS", "6")),
                 budget=budget,
                 session=memory,
@@ -284,6 +337,7 @@ def chat(request: ChatRequest) -> ChatResponse:
         stop_reason=result.stop_reason,
         context=result.context,
         conflicts=handle.conflicts,
+        citations=result.citations,
     )
 
 
