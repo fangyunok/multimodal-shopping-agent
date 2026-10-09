@@ -22,7 +22,8 @@ def make_tools(tmp_path) -> ShoppingTools:
 
 def test_dispatcher_validates_and_executes_call(tmp_path) -> None:
     result = make_tools(tmp_path).execute(ToolCall(name="check_inventory", arguments={"product_id": "one"}))
-    assert result == {"product_id": "one", "stock": 3, "available": True}
+    assert result == {"product_id": "one", "stock": 3, "available": True,
+                      "source": "catalog_demo", "observed_at": None}
 
 
 def test_dispatcher_rejects_unknown_tool(tmp_path) -> None:
@@ -33,3 +34,4 @@ def test_dispatcher_rejects_unknown_tool(tmp_path) -> None:
 def test_dispatcher_rejects_invalid_or_extra_arguments(tmp_path) -> None:
     with pytest.raises(ValidationError):
         make_tools(tmp_path).execute(ToolCall(name="check_inventory", arguments={"product_id": "one", "admin": True}))
+

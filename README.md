@@ -47,6 +47,9 @@ flowchart LR
 
 Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible LLM 后端；配置与公平评测方法见 [LLM Planner 文档](docs/LLM_PLANNER.md)，GPU 复现实验见 [AutoDL 指南](docs/AUTODL_PLANNER.md)。
 
+HTTP 业务接入现支持可替换的外部库存、调用方鉴权与会话隔离，以及 `/chat` 的大模型多步工具决策。
+默认模式仍使用演示目录和规则决策；配置方法、库存契约、程序约束和测试边界见 [业务接入文档](docs/BUSINESS_INTEGRATION.md)。
+
 项目包含 [20 条开发集与 100 条锁定 Planner 测试集](docs/PLANNER_DATASET.md)。运行规则基线：
 
 ```powershell

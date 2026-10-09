@@ -15,6 +15,11 @@ class ShoppingAgent:
         self.planner = planner or RulePlanner([product.category for product in tools.retriever.products])
 
     def run(self, request: AgentRequest) -> AgentResponse:
+        result = self._run(request)
+        result.inventory_source = self.tools.inventory.source
+        return result
+
+    def _run(self, request: AgentRequest) -> AgentResponse:
         plan = self.planner.plan(request.query, request.intent)
         intent = "compare" if len(request.product_ids) >= 2 else plan.intent
         trace: list[dict] = []
@@ -53,13 +58,19 @@ class ShoppingAgent:
         if not hits:
             return AgentResponse(intent=intent, answer="没有找到满足条件的商品，请放宽预算或更换描述。", tool_trace=trace)
         available = []
+        checked_hits = []
         for hit in hits:
             inventory = self.tools.execute(ToolCall(name="check_inventory", arguments={"product_id": hit.product.id}))
             trace.append({"tool": "check_inventory", "arguments": {"product_id": hit.product.id}, "result": inventory})
+            # 展示库存和已验证库存保持一致，不修改共享的商品目录对象。
+            checked = hit.model_copy(update={
+                "product": hit.product.model_copy(update={"stock": inventory["stock"]}),
+            })
+            checked_hits.append(checked)
             if inventory["available"]:
-                available.append(hit)
+                available.append(checked)
         if not available:
-            return AgentResponse(intent=intent, answer="检索到了相关商品，但目前都没有库存。", tool_trace=trace, hits=hits)
+            return AgentResponse(intent=intent, answer="检索到了相关商品，但目前都没有库存。", tool_trace=trace, hits=checked_hits)
         top = available[0]
         reason = "、".join(top.reasons) or "评分较高"
         answer = f"推荐 {top.product.title} [{top.product.id}]（¥{top.product.price:g}，评分 {top.product.rating:.1f}），因为{reason}。"

@@ -102,6 +102,10 @@ CI 自动清理测试栈；本地发生失败时也应执行最后一条清理�
 
 ## 四、环境变量
 
+外部库存、HTTP 调用方鉴权和 `/chat` 大模型决策的配置见 [业务接入文档](BUSINESS_INTEGRATION.md)。
+Compose 已透传对应环境变量。默认 `AUTH_MODE=demo`、`INVENTORY_BACKEND=catalog`、`REASONER_BACKEND=rule`；
+对外业务部署需显式启用鉴权，并配置实际库存源。模型/库存的契约测试使用本地 HTTP 服务，不代表已经接通真实上游。
+
 ### 检索
 
 | 变量 | 默认 | 说明 |

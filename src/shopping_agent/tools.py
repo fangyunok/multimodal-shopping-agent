@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .models import Product, SearchHit, SearchRequest
+from .inventory import CatalogInventory, InventoryProvider
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,9 +39,10 @@ class UnknownToolError(ValueError):
 
 
 class ShoppingTools:
-    def __init__(self, retriever: Retriever):
+    def __init__(self, retriever: Retriever, inventory: InventoryProvider | None = None):
         self.retriever = retriever
         self.by_id = {product.id: product for product in retriever.products}
+        self.inventory = inventory if inventory is not None else CatalogInventory(retriever.products)
 
     def search_products(self, request: SearchRequest) -> list[SearchHit]:
         excluded = set(request.excluded_product_ids)
@@ -48,11 +50,13 @@ class ShoppingTools:
         return [hit for hit in self.retriever.search(request) if hit.product.id not in excluded]
 
     def compare_products(self, product_ids: list[str]) -> list[Product]:
-        return [self.by_id[product_id] for product_id in product_ids if product_id in self.by_id]
+        return [self.by_id[product_id].model_copy(update={"stock": self.check_inventory(product_id)["stock"]})
+                for product_id in product_ids if product_id in self.by_id]
 
-    def check_inventory(self, product_id: str) -> dict[str, int | str | bool]:
-        product = self.by_id[product_id]
-        return {"product_id": product_id, "stock": product.stock, "available": product.stock > 0}
+    def check_inventory(self, product_id: str) -> dict:
+        if product_id not in self.by_id:
+            raise KeyError(product_id)
+        return self.inventory.check(product_id)
 
     def execute(self, call: ToolCall):
         if call.name == "search_products":
@@ -83,7 +87,7 @@ class ShoppingTools:
             ),
             ToolDefinition(
                 name="check_inventory",
-                description="查询指定商品的实时库存可用性。",
+                description="查询指定商品的库存；source 标识演示目录或外部服务，失败表示库存未知。",
                 parameters=ProductIdInput.model_json_schema(),
             ),
         ]
