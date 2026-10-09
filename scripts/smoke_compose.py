@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import subprocess
@@ -16,7 +17,7 @@ import uuid
 
 
 CONTAINER_REQUEST = """
-import json, sys, urllib.request, urllib.error
+import http.client, json, sys, urllib.request, urllib.error
 data = None if sys.argv[2] == 'null' else sys.argv[2].encode()
 request = urllib.request.Request('http://127.0.0.1:8000' + sys.argv[1], data=data,
     headers={'Content-Type': 'application/json'})
@@ -24,7 +25,7 @@ try:
     response = urllib.request.urlopen(request, timeout=8)
 except urllib.error.HTTPError as error:
     response = error
-except (urllib.error.URLError, TimeoutError):
+except (OSError, http.client.HTTPException):
     print(json.dumps({'status': 0, 'body': {}}))
     sys.exit(0)
 print(json.dumps({'status': response.status, 'body': json.loads(response.read())}))
@@ -45,7 +46,7 @@ def gateway_status(path: str = "/readyz") -> int:
             return response.status
     except urllib.error.HTTPError as error:
         return error.code
-    except (urllib.error.URLError, TimeoutError):
+    except (OSError, http.client.HTTPException):
         return 0
 
 
