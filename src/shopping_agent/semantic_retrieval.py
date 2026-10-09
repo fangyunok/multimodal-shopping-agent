@@ -53,7 +53,10 @@ class SemanticRetriever:
         else:
             scores = np.asarray([product.rating / 5 for product in self.products])
         hits: list[SearchHit] = []
+        excluded = set(request.excluded_product_ids)
         for product, score in zip(self.products, scores):
+            if product.id in excluded:
+                continue
             if request.max_price is not None and product.price > request.max_price:
                 continue
             if request.category and request.category.lower() not in product.category.lower():
@@ -63,3 +66,4 @@ class SemanticRetriever:
                 reasons.append(f"价格不超过 ¥{request.max_price:g}")
             hits.append(SearchHit(product=product, score=round(float(score), 4), text_score=round(float(score), 4) if request.query else 0, image_score=round(float(score), 4) if request.image_path else 0, reasons=reasons))
         return sorted(hits, key=lambda hit: (hit.score, hit.product.rating), reverse=True)[: request.top_k]
+

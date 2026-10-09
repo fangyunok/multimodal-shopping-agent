@@ -1,8 +1,12 @@
 services:
   shopping-agent:
-    build: .
-    ports:
-      - "8010:8000"
+    image: multimodal-shopping-agent:local
+    build:
+      context: .
+      args:
+        INSTALL_EXTRAS: redis
+    expose:
+      - "8000"
     environment:
       RETRIEVER_BACKEND: baseline
       CATALOG_PATH: /app/data/products.jsonl
@@ -16,6 +20,16 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  gateway:
+    image: haproxy:3.0-alpine
+    ports:
+      - "8010:8000"
+    volumes:
+      - ./deploy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - shopping-agent
     restart: unless-stopped
 
   # 水平扩容时再起一个副本，验证"无状态服务 + 共享会话"确实成立：
@@ -32,3 +46,4 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
+

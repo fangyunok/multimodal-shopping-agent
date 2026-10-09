@@ -41,7 +41,7 @@ import numpy as np  # noqa: E402
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from shopping_agent.encoder_service import EmbeddingCache, CachedEncoder  # noqa: E402
+from shopping_agent.encoder_service import BatchQueueFull, BatcherStopped, EmbeddingCache, CachedEncoder  # noqa: E402
 
 MAX_ITEMS_PER_REQUEST = 512
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -86,6 +86,8 @@ def build_encoder() -> CachedEncoder:
         cache=cache,
         max_batch=int(os.getenv("ENCODER_MAX_BATCH", "256")),
         max_wait_ms=float(os.getenv("ENCODER_MAX_WAIT_MS", "8")),
+        max_pending_items=int(os.getenv("ENCODER_MAX_PENDING_ITEMS", "1024")),
+        queue_timeout_seconds=float(os.getenv("ENCODER_QUEUE_TIMEOUT_SECONDS", "5")),
     )
 
 
@@ -139,7 +141,12 @@ def _response(vectors: np.ndarray, requested: int) -> EmbeddingResponse:
 
 @app.post("/embed/text", response_model=EmbeddingResponse)
 def embed_texts(request: TextRequest) -> EmbeddingResponse:
-    vectors = get_encoder().encode_texts(request.texts)
+    try:
+        vectors = get_encoder().encode_texts(request.texts)
+    except (BatchQueueFull, BatcherStopped) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except TimeoutError as error:
+        raise HTTPException(status_code=504, detail=str(error)) from error
     return _response(vectors, len(request.texts))
 
 
@@ -157,7 +164,12 @@ def embed_images(request: ImageRequest) -> EmbeddingResponse:
             with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as temporary:
                 temporary.write(raw)
                 paths.append(Path(temporary.name))
-        vectors = get_encoder().encode_images(paths)
+        try:
+            vectors = get_encoder().encode_images(paths)
+        except (BatchQueueFull, BatcherStopped) as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        except TimeoutError as error:
+            raise HTTPException(status_code=504, detail=str(error)) from error
         return _response(vectors, len(paths))
     finally:
         for path in paths:
@@ -189,3 +201,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

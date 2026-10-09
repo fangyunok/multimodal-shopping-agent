@@ -59,7 +59,9 @@ def test_readiness_degrades_when_store_is_unreachable(
             return False
 
     monkeypatch.setattr(app_module, "get_session_store", lambda: BrokenStore())
-    body = TestClient(app_module.app).get("/readyz").json()
+    response = TestClient(app_module.app).get("/readyz")
+    assert response.status_code == 503
+    body = response.json()
     assert body["status"] == "degraded"
     assert body["checks"]["session_store"]["reachable"] is False
     assert body["checks"]["retriever"]["ok"] is True
@@ -180,3 +182,4 @@ def test_partitioned_backend_serves_a_partitioned_index(
     body = TestClient(app_module.app).get("/readyz").json()
     assert body["checks"]["retriever"]["products"] == len(products)
     assert body["checks"]["index"]["partitions"] == 4
+

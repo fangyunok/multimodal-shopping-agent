@@ -1,4 +1,8 @@
 from io import BytesIO
+import asyncio
+import threading
+
+import httpx
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -38,6 +42,39 @@ def test_agent_endpoint() -> None:
 def test_json_endpoint_rejects_local_image_path() -> None:
     response = client.post("/agent", json={"query": "鞋", "image_path": "C:/private/image.png"})
     assert response.status_code == 400
+    assert client.post("/search", json={"image_path": "C:/private/image.png"}).status_code == 400
+
+
+def test_slow_image_request_does_not_block_health(monkeypatch) -> None:
+    from shopping_agent import app as app_module
+    from shopping_agent.models import AgentResponse
+
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_run(self, request):
+        entered.set()
+        assert release.wait(3), "测试应在模型返回前完成健康检查"
+        return AgentResponse(intent="search", answer="ok", tool_trace=[])
+
+    monkeypatch.setattr(app_module.ShoppingAgent, "run", slow_run)
+    stream = BytesIO()
+    Image.new("RGB", (8, 8), "white").save(stream, format="PNG")
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as api:
+            upload = asyncio.create_task(api.post(
+                "/agent/image", files={"image": ("q.png", stream.getvalue(), "image/png")},
+            ))
+            try:
+                assert await asyncio.to_thread(entered.wait, 2)
+                response = await asyncio.wait_for(api.get("/healthz"), timeout=1)
+                assert response.status_code == 200
+                assert not upload.done(), "模型仍在执行时健康检查应已经返回"
+            finally:
+                release.set()
+                await upload
+
+    asyncio.run(scenario())
 
 
 def test_image_upload_endpoint() -> None:
@@ -58,3 +95,4 @@ def test_image_upload_rejects_wrong_media_type() -> None:
         files={"image": ("query.txt", b"not an image", "text/plain")},
     )
     assert response.status_code == 415
+

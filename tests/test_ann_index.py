@@ -36,6 +36,19 @@ def test_numpy_backend_matches_brute_force() -> None:
         assert [int(item) for item in row] == brute_force(vectors, query, 5)
 
 
+@pytest.mark.parametrize("metric", ["ip", "l2"])
+@pytest.mark.parametrize("top_k", [1, 5, 64, 128])
+def test_numpy_ties_preserve_catalog_order_at_candidate_boundary(metric: str, top_k: int) -> None:
+    vectors = np.concatenate([np.tile([[1.0, 0.0]], (96, 1)), np.tile([[0.0, 1.0]], (32, 1))])
+    queries = np.eye(2, dtype=np.float32)
+    ann = AnnIndex.build(vectors, AnnIndexConfig(kind="numpy", dimension=2, metric=metric))
+    _, indices = ann.search(queries, top_k)
+    for query, row in zip(queries, indices):
+        scores = vectors @ query if metric == "ip" else -((vectors - query) ** 2).sum(axis=1)
+        expected = np.argsort(-scores, kind="stable")[:top_k]
+        assert row.tolist() == expected.tolist()
+
+
 def test_numpy_backend_is_exact_but_faiss_flat_agrees() -> None:
     pytest.importorskip("faiss")
     vectors, queries = sample()
@@ -238,3 +251,4 @@ def test_build_rejects_empty_collection() -> None:
     with pytest.raises(ValueError) as error:
         AnnIndex.build(np.empty((0, 8), dtype=np.float32), AnnIndexConfig(kind="numpy", dimension=8))
     assert "空" in str(error.value)
+

@@ -44,7 +44,7 @@ class ShoppingAgent:
             answer = "；".join(lines) + f"。综合评分与价格，优先考虑 {best.title}。"
             return AgentResponse(intent=intent, answer=answer, tool_trace=trace, citations=[p.id for p in products])
 
-        values = request.model_dump(include={"query", "image_path", "max_price", "category", "top_k"})
+        values = request.model_dump(include={"query", "image_path", "max_price", "category", "top_k", "excluded_product_ids"})
         values["max_price"] = request.max_price if request.max_price is not None else plan.max_price
         values["category"] = request.category or plan.category
         search_request = SearchRequest(**values)
@@ -64,3 +64,4 @@ class ShoppingAgent:
         reason = "、".join(top.reasons) or "评分较高"
         answer = f"推荐 {top.product.title} [{top.product.id}]（¥{top.product.price:g}，评分 {top.product.rating:.1f}），因为{reason}。"
         return AgentResponse(intent=intent, answer=answer, tool_trace=trace, hits=available, citations=[top.product.id])
+

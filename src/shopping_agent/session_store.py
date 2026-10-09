@@ -17,22 +17,22 @@ B 的内存里没有这个会话，于是"预算上限 ¥500"这种已确认约�
 两个副本同时读到一个会话，各自处理一轮请求，然后先后写回——后写的那次会把先写的那次
 **整段覆盖掉**，用户看到某轮对话凭空消失。所以写入必须带版本校验：
 
-    只有"我读到的版本 == 当前存储里的版本"时才允许写；版本对不上就重读、重放、重写。
+    只有"我读到的版本 == 当前存储里的版本"时才允许写；版本不符则拒绝本次提交。
 
 本模块用 Lua 脚本在 Redis 端原子完成这次比较与写入（``redis.call`` 保证原子性），
 而不是"GET 出来比一下再 SET"——后者中间存在竞态窗口，等于没做。
 
 关于并发写的诚实说明
 --------------------
-CAS 只能保证"不会静默覆盖"，不能凭空解决语义冲突。同一个 ``session_id`` 被两个客户端
-同时驱动，本身就是客户端异常。本层的处理是：重试写入、采用最新版本、并**累计冲突计数**
-（``SessionHandle.conflicts``）。计数存在的意义是让这种异常可见——如果它会持续发生，
-正确的修法是在网关层按 ``session_id`` 做一致性路由，而不是把重试次数调大。
+并发请求可以来自双击、多个页面或网络重试。冲突时抛出 ``SessionConflict``，HTTP 入口
+返回 409；调用方应读取最新状态后重新决策。只替换版本号再写旧快照会丢失已提交的更新。
+相同会话路由到同一副本也不能保证串行；需要排队时应覆盖完整的读取、执行、提交过程。
 """
 
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import contextmanager
 from typing import Iterator, Protocol
 
@@ -64,7 +64,7 @@ return 1
 
 
 class SessionConflict(RuntimeError):
-    """版本冲突且重试用尽。调用方应重新读取会话而不是继续使用陈旧状态。"""
+    """版本冲突导致提交被拒绝。调用方应重新读取会话而不是继续使用陈旧状态。"""
 
 
 class SessionStore(Protocol):
@@ -93,6 +93,7 @@ class InMemorySessionStore:
 
     def __init__(self) -> None:
         self._snapshots: dict[str, SessionSnapshot] = {}
+        self._lock = threading.RLock()
 
     def load(
         self,
@@ -100,33 +101,38 @@ class InMemorySessionStore:
         budget: ContextBudget | None = None,
         system_prompt: str = "你是商品导购助手，价格与库存只能来自工具返回结果。",
     ) -> SessionMemory:
-        snapshot = self._snapshots.get(session_id)
-        if snapshot is None:
-            return SessionMemory(session_id=session_id, budget=budget, system_prompt=system_prompt)
-        return SessionMemory.from_snapshot(snapshot, budget=budget, system_prompt=system_prompt)
+        with self._lock:
+            snapshot = self._snapshots.get(session_id)
+            if snapshot is None:
+                return SessionMemory(session_id=session_id, budget=budget, system_prompt=system_prompt)
+            return SessionMemory.from_snapshot(snapshot, budget=budget, system_prompt=system_prompt)
 
     def save(self, memory: SessionMemory) -> bool:
-        current = self._snapshots.get(memory.session_id)
-        current_version = current.version if current else 0
-        if current_version != memory.version:
-            return False
-        snapshot = memory.to_snapshot()
-        snapshot.version = memory.version + 1
-        self._snapshots[memory.session_id] = snapshot
-        memory.version = snapshot.version
-        return True
+        with self._lock:
+            current = self._snapshots.get(memory.session_id)
+            current_version = current.version if current else 0
+            if current_version != memory.version:
+                return False
+            snapshot = memory.to_snapshot()
+            snapshot.version = memory.version + 1
+            self._snapshots[memory.session_id] = snapshot
+            memory.version = snapshot.version
+            return True
 
     def delete(self, session_id: str) -> None:
-        self._snapshots.pop(session_id, None)
+        with self._lock:
+            self._snapshots.pop(session_id, None)
 
     def ping(self) -> bool:
         return True
 
     def __len__(self) -> int:
-        return len(self._snapshots)
+        with self._lock:
+            return len(self._snapshots)
 
     def versions(self) -> dict[str, int]:
-        return {session_id: snapshot.version for session_id, snapshot in self._snapshots.items()}
+        with self._lock:
+            return {session_id: snapshot.version for session_id, snapshot in self._snapshots.items()}
 
 
 class RedisSessionStore:
@@ -151,7 +157,9 @@ class RedisSessionStore:
                 import redis  # noqa: PLC0415
             except ImportError as error:  # pragma: no cover - 取决于环境
                 raise RuntimeError(REDIS_MISSING_HINT) from error
-            self.client = redis.Redis.from_url(url, decode_responses=True)
+            self.client = redis.Redis.from_url(
+                url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2,
+            )
         # 预加载脚本：避免每次请求都传一遍脚本体，也省掉 EVALSHA 的首轮回退。
         self._script = self.client.register_script(CAS_SCRIPT)
 
@@ -196,7 +204,9 @@ class RedisSessionStore:
 
 
 class SessionHandle:
-    """会话作用域：进入时加载、退出时用 CAS 写回，冲突时重读重试。
+    """会话作用域：进入时加载、退出时用 CAS 写回，冲突时拒绝旧快照。
+
+    ``retries`` 保留为兼容参数；版本冲突不会触发自动重写或工具重放。
 
     用法：
 
@@ -230,17 +240,12 @@ class SessionHandle:
         if exc_type is not None or self.memory is None:
             # 本轮失败就不落盘：宁可丢掉一轮，也不要把半截状态写进会话。
             return False
-        for _ in range(self.retries):
-            if self.store.save(self.memory):
-                return False
-            self.conflicts += 1
-            # 版本对不上：读回最新快照，用我们的状态覆盖，但采用存储端的版本号。
-            fresh = self.store.load(self.session_id, budget=self.budget, system_prompt=self.system_prompt)
-            latest_version = fresh.version
-            self.memory.version = latest_version
+        if self.store.save(self.memory):
+            return False
+        self.conflicts += 1
         raise SessionConflict(
-            f"会话 {self.session_id} 连续 {self.retries} 次写入均版本冲突；"
-            "请检查是否有多个副本在并发驱动同一个 session_id"
+            f"会话 {self.session_id} 写入发生版本冲突，本次结果未提交；"
+            "请读取最新会话后重新提交请求"
         )
 
 
@@ -299,3 +304,4 @@ __all__ = [
     "open_session",
     "redis_available",
 ]
+
