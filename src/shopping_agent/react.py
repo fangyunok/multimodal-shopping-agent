@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .planner import RulePlanner
 from .models import SearchRequest
-from .session import ContextBudget, SessionMemory, SessionState, estimate_tokens
+from .session import ContextBudget, SessionMemory, SessionState, PRODUCT_ID_PATTERN, estimate_tokens
 from .tools import ShoppingTools, ToolCall, UnknownToolError
 
 StopReason = Literal["final_answer", "max_steps", "loop_detected", "budget_exhausted", "no_candidates"]
@@ -344,10 +344,17 @@ class ReActAgent:
         self.session = session or SessionMemory(budget=self.budget)
         self.planner = RulePlanner([product.category for product in tools.retriever.products])
 
-    def run(self, query: str, intent: str = "auto") -> ReActResult:
+    def run(self, query: str, intent: str = "auto", *, filters: dict | None = None,
+            product_ids: list[str] | None = None, on_progress=None, cancelled=None) -> ReActResult:
         plan = self.planner.plan(query, intent)
         self.session.begin_turn(query, plan)
         resolved_intent = intent if intent != "auto" else plan.intent
+        for name, value in (filters or {}).items():
+            if name in {"max_price", "category"}:
+                setattr(self.session.state, name, value)
+        targets = product_ids or PRODUCT_ID_PATTERN.findall(query)
+        if targets and resolved_intent in {"inventory", "compare"}:
+            self.session.state.last_candidates = list(dict.fromkeys(targets))
 
         steps: list[ReActStep] = []
         observations: list[Observation] = []
@@ -357,6 +364,8 @@ class ReActAgent:
         window = self.session.window()
 
         for index in range(self.max_steps):
+            if cancelled is not None and cancelled.is_set():
+                raise InterruptedError("request disconnected")
             if self.session.over_budget():
                 stop_reason = "budget_exhausted"
                 answer = "对话上下文已超出预算，请开启新一轮会话继续。"
@@ -393,9 +402,13 @@ class ReActAgent:
                 break
             seen.add(signature)
 
+            if on_progress:
+                on_progress({"tool": decision.action, "phase": "start"})
             started = time.perf_counter()
             observation, error = self._execute(decision.action, decision.arguments, index)
             latency_ms = (time.perf_counter() - started) * 1000
+            if on_progress:
+                on_progress({"tool": decision.action, "phase": "end", "ok": observation.ok})
             observations.append(observation)
             if observation.ok:
                 self.session.record_observation(decision.action, observation.payload, index)

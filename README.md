@@ -1,5 +1,18 @@
 # 多模态内容理解与工具编排 Agent
 
+## 打开购物前端
+
+已提供 React + TypeScript 购物界面：连续对话、图片上传、商品卡片、指定商品查库存、排除、两件商品对比、工具进度与最近会话恢复。
+
+```bash
+docker compose up --build -d
+```
+
+浏览器打开 **http://localhost:8010**。默认无需模型密钥，使用规则决策和 5 件演示商品；默认目录没有商品图片，图片上传需补充文字，真正的图片检索需配置图文索引。
+
+无 Docker 的启动方式、鉴权及前端开发说明见 [前端使用指南](docs/FRONTEND.md)。前端编译需 Node.js 22+；Docker 构建自动完成。
+
+
 [![CI](https://github.com/fangyunok/multimodal-shopping-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/fangyunok/multimodal-shopping-agent/actions/workflows/ci.yml)
 
 **面向图文内容的可复现多模态 Agent：内容理解 → 检索 → 工具编排 → 可溯源生成。**

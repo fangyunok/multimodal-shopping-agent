@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import os
+import asyncio
+import json
+import threading
 import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from starlette.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from .web_presenter import cards_from_trace, public_trace
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .agent import ShoppingAgent
 from .auth import auth_config, identify, session_key
@@ -163,13 +168,14 @@ def get_planner():
 
 
 app = FastAPI(title="Multimodal Shopping Agent", version="0.1.0")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 
 @app.middleware("http")
 async def authenticate(request: Request, call_next):
-    if request.url.path in {"/", "/healthz", "/readyz"}:
+    if request.url.path in {"/", "/healthz", "/readyz"} or request.url.path.startswith("/static/"):
         return await call_next(request)
     try:
         mode, keys = auth_config()
@@ -190,7 +196,7 @@ async def inventory_unavailable(request: Request, error: InventoryUnavailable):
 
 @app.get("/", include_in_schema=False)
 def demo_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "ui" / "index.html")
 
 
 @app.get("/health")
@@ -292,6 +298,11 @@ class ChatRequest(BaseModel):
     intent: Literal["auto", "search", "compare", "inventory"] = "auto"
 
 
+    max_price: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    category: str | None = Field(default=None, max_length=100)
+    product_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
 class ChatResponse(BaseModel):
     session_id: str
     answer: str
@@ -299,46 +310,106 @@ class ChatResponse(BaseModel):
     tool_calls: int
     stop_reason: str
     context: dict
+    cards: list[dict] = Field(default_factory=list)
+    tool_trace: list[dict] = Field(default_factory=list)
+    constraints: dict = Field(default_factory=dict)
     conflicts: int = Field(description="成功提交时为 0；版本冲突返回 409，已提交状态保持不变")
     citations: list[str] = Field(default_factory=list)
 
 
-@app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, http_request: Request) -> ChatResponse:
-    """多轮会话接口：会话状态存在外部存储里，因此本进程**无状态**。
+def save_ui_turn(memory, query, response):
+    memory.ui_history.extend([
+        {"role": "user", "text": query},
+        {"role": "assistant", "text": response.answer, "reply": response.model_dump(mode="json")},
+    ])
+    memory.ui_history = memory.ui_history[-40:]
 
-    这是阶段二的关键接口。同一个 session_id 的连续请求可以落到任意副本上，
-    状态由 SessionStore 保证一致；写入用版本化 CAS，冲突返回 409。
-    """
+
+def _chat(request: ChatRequest, principal: str, on_progress=None, cancelled=None):
     budget = ContextBudget(max_tokens=int(os.getenv("CONTEXT_BUDGET", "2048")))
-    key = session_key(http_request.state.principal, request.session_id)
-    handle = SessionHandle(get_session_store(), key, budget)
+    handle = SessionHandle(get_session_store(), session_key(principal, request.session_id), budget)
     try:
         reasoner = get_reasoner()
     except ValueError:
         raise HTTPException(status_code=503, detail="多轮决策配置无效") from None
     try:
         with handle as memory:
-            agent = ReActAgent(
-                get_tools(),
-                reasoner=reasoner,
-                max_steps=int(os.getenv("MAX_STEPS", "6")),
-                budget=budget,
-                session=memory,
-            )
-            result = agent.run(request.query, request.intent)
+            runner = ReActAgent(get_tools(), reasoner=reasoner,
+                max_steps=int(os.getenv("MAX_STEPS", "6")), budget=budget, session=memory)
+            result = runner.run(request.query, request.intent,
+                filters=request.model_dump(include=request.model_fields_set & {"max_price", "category"}),
+                product_ids=request.product_ids, on_progress=on_progress, cancelled=cancelled)
+            if cancelled is not None and cancelled.is_set():
+                raise InterruptedError("request disconnected")
+            response = ChatResponse(session_id=request.session_id, answer=result.answer,
+                intent=result.intent, tool_calls=result.tool_calls, stop_reason=result.stop_reason,
+                context=result.context, conflicts=0, citations=result.citations,
+                cards=cards_from_trace(result.trace(), get_tools()),
+                tool_trace=public_trace(result.trace()),
+                constraints=memory.state.model_dump(include={"max_price", "category", "excluded_product_ids"}))
+            save_ui_turn(memory, request.query, response)
     except SessionConflict as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    return ChatResponse(
-        session_id=request.session_id,
-        answer=result.answer,
-        intent=result.intent,
-        tool_calls=result.tool_calls,
-        stop_reason=result.stop_reason,
-        context=result.context,
-        conflicts=handle.conflicts,
-        citations=result.citations,
-    )
+        raise HTTPException(409, "会话已更新，请读取最新会话后重试") from error
+    return response
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(request: ChatRequest, http_request: Request) -> ChatResponse:
+    return _chat(request, http_request.state.principal)
+
+
+@app.get("/chat/history")
+def chat_history(http_request: Request, session_id: str = Query(min_length=1, max_length=128)):
+    memory = get_session_store().load(session_key(http_request.state.principal, session_id))
+    return {"messages": memory.ui_history,
+            "constraints": memory.state.model_dump(include={"max_price", "category", "excluded_product_ids"})}
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest, http_request: Request):
+    # The shared bounded thread pool runs synchronous tools. SSE contains observed
+    # tool lifecycle events, never generated progress or internal reasoning.
+    loop = asyncio.get_running_loop()
+    events = asyncio.Queue()
+    cancelled = threading.Event()
+
+    def emit(event, data):
+        if not cancelled.is_set():
+            loop.call_soon_threadsafe(events.put_nowait, (event, data))
+
+    def work():
+        try:
+            result = _chat(request, http_request.state.principal,
+                           lambda data: emit("progress", data), cancelled)
+            emit("result", result.model_dump(mode="json"))
+        except InterruptedError:
+            pass
+        except HTTPException as error:
+            emit("error", {"status": error.status_code, "detail": error.detail})
+        except Exception:
+            emit("error", {"status": 503, "detail": "服务暂时不可用，请恢复会话检查结果后再重试。"})
+        finally:
+            emit("done", {})
+
+    async def generate():
+        task = asyncio.create_task(run_in_threadpool(work))
+        try:
+            while True:
+                try:
+                    event, data = await asyncio.wait_for(events.get(), timeout=10)
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+                    continue
+                if event == "done":
+                    break
+                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        finally:
+            cancelled.set()
+            # Cancellation is cooperative between calls; the current external call
+            # keeps its own timeout and is not falsely reported as terminated.
+            await task
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/agent/image", response_model=AgentResponse)
@@ -364,6 +435,7 @@ async def agent_with_image(
 def _run_uploaded_image(
     content: bytes, content_type: str, query: str,
     max_price: float | None, category: str | None, top_k: int,
+    excluded_product_ids: list[str] | None = None,
 ) -> AgentResponse:
     suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[content_type]
     temp_path: Path | None = None
@@ -374,7 +446,7 @@ def _run_uploaded_image(
         try:
             with Image.open(temp_path) as uploaded:
                 uploaded.verify()
-        except (UnidentifiedImageError, OSError) as error:
+        except (UnidentifiedImageError, OSError, SyntaxError, Image.DecompressionBombError) as error:
             raise HTTPException(status_code=422, detail="上传内容不是有效图片") from error
         request = AgentRequest(
             query=query,
@@ -382,9 +454,88 @@ def _run_uploaded_image(
             max_price=max_price,
             category=category,
             top_k=top_k,
+            excluded_product_ids=excluded_product_ids or [],
+            intent="search",
         )
         return ShoppingAgent(get_tools(), get_planner()).run(request)
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
 
+
+
+@app.get("/ui/config")
+def ui_config():
+    tools = get_tools()
+    image_available = (bool(tools.retriever.image_vectors)
+                       if isinstance(tools.retriever, HybridRetriever) else True)
+    return {"categories": sorted({p.category for p in tools.retriever.products}),
+            "product_count": len(tools.retriever.products),
+            "inventory_source": tools.inventory.source,
+            "reasoner_backend": os.getenv("REASONER_BACKEND", "rule"),
+            "image_search_available": image_available}
+
+
+@app.post("/chat/image", response_model=ChatResponse)
+async def chat_image(http_request: Request, image: UploadFile = File(...),
+                     session_id: str = Form(min_length=1, max_length=128),
+                     query: str = Form(default="", max_length=4000),
+                     max_price: float | None = Form(default=None, ge=0, allow_inf_nan=False),
+                     category: str | None = Form(default=None, max_length=100),
+                     filters: str = Form(default="{}", max_length=1000)):
+    if image.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(415, "仅支持 JPEG、PNG 和 WebP 图片")
+    content = await image.read(MAX_IMAGE_BYTES + 1)
+    if len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "图片不能超过 5 MB")
+    try:
+        parsed_filters = ImageFilters.model_validate_json(filters).model_dump(exclude_unset=True)
+    except ValidationError:
+        raise HTTPException(422, "图片筛选条件无效") from None
+    return await run_in_threadpool(_image_chat, http_request.state.principal, session_id,
+                                  content, image.content_type, query, max_price, category, parsed_filters)
+
+
+class ImageFilters(BaseModel):
+    model_config = {"extra": "forbid"}
+    max_price: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    category: str | None = Field(default=None, max_length=100)
+
+
+def _image_chat(principal, session_id, content, content_type, query, max_price, category, filters=None):
+    config = ui_config()
+    if not config["image_search_available"] and not query.strip():
+        raise HTTPException(422, "当前演示目录没有商品图片，请补充文字描述；以图找货需要接入图文索引。")
+    budget = ContextBudget(max_tokens=int(os.getenv("CONTEXT_BUDGET", "2048")))
+    handle = SessionHandle(get_session_store(), session_key(principal, session_id), budget)
+    try:
+        with handle as memory:
+            plan = RulePlanner(config["categories"]).plan(query, "search")
+            memory.begin_turn(query or "以图找货", plan)
+            if max_price is not None:
+                memory.state.max_price = max_price
+            if category:
+                memory.state.category = category
+            for name, value in (filters or {}).items():
+                setattr(memory.state, name, value)
+            result = _run_uploaded_image(content, content_type, query,
+                memory.state.max_price, memory.state.category, 3, memory.state.excluded_product_ids)
+            memory.record_observation("search_products", result.hits)
+            for entry in result.tool_trace:
+                if entry["tool"] == "check_inventory":
+                    memory.record_observation("check_inventory", entry["result"])
+            if not config["image_search_available"]:
+                result.answer = "当前目录没有商品图片，本次仅按文字检索。" + result.answer
+            memory.record_answer(result.answer)
+            context = memory.window().stats()
+            context["inventory_source"] = get_tools().inventory.source
+            constraints = memory.state.model_dump(include={"max_price", "category", "excluded_product_ids"})
+            trace = [{"tool": "search_products", "result": result.hits}] + result.tool_trace
+            response = ChatResponse(session_id=session_id, answer=result.answer, intent="search",
+                tool_calls=len(result.tool_trace), stop_reason="final_answer", context=context,
+                conflicts=0, citations=result.citations, cards=cards_from_trace(trace, get_tools()),
+                tool_trace=public_trace(result.tool_trace), constraints=constraints)
+            save_ui_turn(memory, query + " [参考图片]", response)
+    except SessionConflict as error:
+        raise HTTPException(409, "会话已更新，请读取最新会话后重试") from error
+    return response

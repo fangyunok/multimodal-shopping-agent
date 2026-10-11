@@ -1,3 +1,10 @@
+FROM node:22-bookworm-slim AS frontend
+WORKDIR /build
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build
+
 FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -16,6 +23,7 @@ RUN groupadd --system app && useradd --system --gid app --home /app app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY --from=frontend /src/shopping_agent/static/ui ./src/shopping_agent/static/ui
 COPY data/products.jsonl ./data/products.jsonl
 
 RUN python -m pip install --upgrade pip && \
@@ -31,3 +39,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"
 
 CMD ["uvicorn", "shopping_agent.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
