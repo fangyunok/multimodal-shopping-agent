@@ -34,7 +34,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_planner_comparison.ps1 `
   -Model Qwen/Qwen2.5-3B-Instruct
 ```
 
-输出包含分项/联合准确率、非法输出率、按标签切片、失败案例、P50/P95 延迟和接口返回的 prompt/completion/total token 数。
+输出包含分项/联合准确率、非法输出率、按标签切片、错误样本、P50/P95 延迟和接口返回的 prompt/completion/total token 数。
 
 ## 公平对照
 

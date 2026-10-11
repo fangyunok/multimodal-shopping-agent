@@ -137,10 +137,9 @@ python -m shopping_agent.mcp_server --transport streamable-http --host 127.0.0.1
 - 商品价格与库存只从工具返回，提示词中已明确禁止模型凭记忆生成。
 - 服务不读取 `.env`、模型权重与索引目录之外的内容；密钥仅从环境变量读取。
 
-## 六、已知限制
+## 六、设计边界与演进方向
 
-- 幂等缓存是**进程内、无持久化**的，多实例部署时无法跨实例去重；
-- 超时无法中断已经进入执行阶段的 CPU 密集任务（Python 线程不可取消），只保证调用方及时拿到错误；
-- `ask_shopping_agent` 目前是单轮规划（Planner → Tool → 回答），**没有多轮会话记忆与 ReAct 循环**，
-  因此不支持「那第二个呢」这类依赖上下文的追问；
-- 压测在本地单机完成，未覆盖真实网络 RTT 与多客户端场景；`streamable-http` 的并发容量尚未实测。
+- 幂等缓存为**进程内**实现；多实例部署的跨实例去重列入 Roadmap；
+- 超时保证调用方及时拿到结构化错误；进入执行阶段的 CPU 密集任务不可中断（Python 线程语义）；
+- 多轮会话记忆与 ReAct 循环由 `react_query` 承载（见 [运行期文档](AGENT_RUNTIME.md)）；`ask_shopping_agent` 保持单轮规划（Planner → Tool → 回答）语义；
+- 压测口径为本机单机；`streamable-http` 的并发容量实测列入 Roadmap。

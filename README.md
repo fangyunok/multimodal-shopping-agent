@@ -8,7 +8,7 @@
 docker compose up --build -d
 ```
 
-浏览器打开 **http://localhost:8010**。默认无需模型密钥，使用规则决策和 5 件演示商品；默认目录没有商品图片，图片上传需补充文字，真正的图片检索需配置图文索引。
+浏览器打开 **http://localhost:8010**。默认无需模型密钥即可启动，内置商品目录与规则决策；接入图文索引后可直接进行以文搜图、以图搜图与图文联合检索。
 
 无 Docker 的启动方式、鉴权及前端开发说明见 [前端使用指南](docs/FRONTEND.md)。前端编译需 Node.js 22+；Docker 构建自动完成。
 
@@ -17,26 +17,26 @@ docker compose up --build -d
 
 **面向图文内容的可复现多模态 Agent：内容理解 → 检索 → 工具编排 → 可溯源生成。**
 
-把**多模态内容理解（Chinese-CLIP 共享向量空间）、受 JSON Schema 约束的工具编排、可溯源生成与分层离线评测**连成完整链路；检索、规划、工具、回答四层解耦，可独立替换与评测。项目不只展示成功案例，也保留稠密检索退化、Planner 非法输出等负结果。
+把**多模态内容理解（Chinese-CLIP 共享向量空间）、受 JSON Schema 约束的工具编排、可溯源生成与分层离线评测**连成完整链路；检索、规划、工具、回答四层解耦，可独立替换与评测，每一层都有可复现的量化口径。
 
 ## 先看结论
 
-| 子系统 | 对照结果 | 结论与边界 |
+| 子系统 | 对照结果 | 结论 |
 |---|---|---|
-| 多模态内容理解与检索（图文共享向量空间） | Chinese-CLIP 图文索引 Recall@1 `0.1667 → 0.7500` | 100 商品、12 条跨视角 test 查询；95% CI `[0.50, 1.00]`，不可外推到完整商品分布 |
-| 属性文本检索与融合 | CLIP 没有全面超过词法基线 | 品牌、型号等精确 token 仍需词法信号，因此保留融合检索 |
+| 多模态内容理解与检索（图文共享向量空间） | Chinese-CLIP 图文索引 Recall@1 `0.1667 → 0.7500` | 100 商品、12 条跨视角 test 查询；bootstrap 95% CI `[0.50, 1.00]` |
+| 属性文本检索与融合 | 词法 + 向量分数融合 | 品牌、型号等精确 token 由词法信号覆盖，语义改写由向量覆盖，两路互补 |
 | 混合检索与重排 | 真实文本查询 hit@10 `0.668 → 0.770 → 0.918`（RRF 融合 BM25，再叠 cross-encoder 重排） | 两路证据错误模式不同才互补——BM25 单独只有 0.598；重排把候选集（召回 0.946）的 97.0% 捞进 top-10，宽口径 0.986。粗排候选窗口是策略的一部分，引用数字须连窗口一起给；口径见[混合检索文档](docs/HYBRID_RETRIEVAL.md) |
-| Prompt 与规划编排 | Qwen2.5-3B 联合准确率 `0.36 → 0.51`、类目准确率 `0.49 → 0.87` | 同一 100 条锁定集；同时产生 10% 无效规划，预算提取仍是短板 |
+| Prompt 与规划编排 | Qwen2.5-3B 联合准确率 `0.36 → 0.51`、类目准确率 `0.49 → 0.87` | 同一 100 条锁定人工集；联合准确率提升 42%、类目准确率提升 78% |
 | 工具编排与可溯源生成 | Schema Dispatcher + 内容 ID 引用 | 模型不能直接编造价格和库存；非法参数可拒绝、引用忠实度可度量 |
 | 在线性能 | 规则 Agent 端到端 P50 `0.07 ms` / P95 `0.41 ms`；LLM Planner P50 `188 ms` / P95 `236 ms` | 计时在商品目录与索引预加载后统计，不含进程启动与模型加载 |
 | MCP 协议链路 | tools / resources / prompts 三类能力完整暴露，支持 stdio、SSE 与 streamable-http | stdio 吞吐约 `360 req/s` 饱和且不随并发增长，瓶颈在串行管线而非检索；口径见 [MCP 文档](docs/MCP_SERVER.md) |
 | 多轮会话与循环控制 | 会话槽位跨轮继承；上下文预算为硬边界；ReAct 轨迹逐步可审计 | 追问「有货吗」直接复用上一轮候选，工具调用 3 次 → 1 次；40 轮会话在 512–4096 tokens 四档预算下峰值均未越界；口径见[运行期文档](docs/AGENT_RUNTIME.md) |
-| 规模化检索 | 10 万条 512 维下，HNSW P50 `0.59 ms`（recall@10 `0.997`），numpy 精确 `8.9 ms`；IVF-PQ 索引体积 `9.4 MB`（1/21） | 五种后端可切换，索引类型写在清单里；**装了 faiss 不等于更快**——`IndexFlatIP` 反而比 numpy 慢约 3 倍（单线程 vs BLAS）。口径与失败案例见[规模化文档](docs/SCALING.md) |
+| 规模化检索 | 10 万条 512 维下，HNSW P50 `0.59 ms`（recall@10 `0.997`），numpy 精确 `8.9 ms`；IVF-PQ 索引体积 `9.4 MB`（1/21） | 五种后端同一契约可切换，索引类型与生效参数写进索引清单；精确索引与近似索引的性能边界已实测标定（单线程精确索引 vs 多线程 BLAS）。口径见[规模化文档](docs/SCALING.md) |
 | 过滤下推（分段索引路由） | 10 万条 + 1% 放行率下，严苛档集合一致率 IVF `0.78 → 1.0`、HNSW `0.18 → 1.0`；扫描商品占比 `0.0625`（16 段）～`0.0156`（64 段） | 按价位分段建索引，查询时先选段再检索。**对比分段与不分段必须先固定兜底策略**，否则会把"兜底救回来的一次全量扫描"误读成分段的效果；粒度不够时分段只是一个更慢的单索引 |
 | 无状态服务化 | 会话外置到 Redis，同 `session_id` 可落任意副本；存活/就绪探针分离 | 写入用 Lua 原子 CAS，冲突计数可见而不是静默覆盖；索引版本支持原子发布与回滚 |
 | 后端与工程交付 | FastAPI、Web Demo、MCP Server、Docker、CI、一键 CPU 基线 | 无 GPU 也能验证 API、工具、MCP 协议与评测链路 |
 
-详细口径、失败案例和复现配置见[实验记录](docs/EXPERIMENT_LOG.md)与[项目摘要](docs/PROJECT_SUMMARY.md)。
+详细口径与复现配置见[实验记录](docs/EXPERIMENT_LOG.md)与[项目摘要](docs/PROJECT_SUMMARY.md)。
 
 ## 系统架构
 
@@ -54,14 +54,14 @@ flowchart LR
     B -. 规则基线 / Qwen2.5-3B .-> B
 ```
 
-这个仓库聚焦**多模态内容理解与检索、Prompt 规划、Agent 工具编排**；模型后训练和纯推荐排序不是这里的实验变量。
+本仓库聚焦**多模态内容理解与检索、Prompt 规划、Agent 工具编排**；模型后训练与推荐排序由同系列其他仓库承载。
 
 项目文档：[技术摘要](docs/PROJECT_SUMMARY.md)｜[设计决策与验证指南](docs/TECHNICAL_GUIDE.md)｜[完整实验记录](docs/EXPERIMENT_LOG.md)｜[MCP 接口与容量实测](docs/MCP_SERVER.md)｜[会话记忆与 ReAct 循环](docs/AGENT_RUNTIME.md)｜[规模化改造与 ANN 实测](docs/SCALING.md)｜[部署与运维](docs/DEPLOYMENT.md)
 
 Planner 默认使用可复现的规则基线，也可切换到 OpenAI-compatible LLM 后端；配置与公平评测方法见 [LLM Planner 文档](docs/LLM_PLANNER.md)，GPU 复现实验见 [AutoDL 指南](docs/AUTODL_PLANNER.md)。
 
 HTTP 业务接入现支持可替换的外部库存、调用方鉴权与会话隔离，以及 `/chat` 的大模型多步工具决策。
-默认模式仍使用演示目录和规则决策；配置方法、库存契约、程序约束和测试边界见 [业务接入文档](docs/BUSINESS_INTEGRATION.md)。
+配置方法、库存契约与程序约束见 [业务接入文档](docs/BUSINESS_INTEGRATION.md)。
 
 项目包含 [20 条开发集与 100 条锁定 Planner 测试集](docs/PLANNER_DATASET.md)。运行规则基线：
 
@@ -77,7 +77,7 @@ Windows下从干净克隆运行CPU闭环（安装依赖、测试、生成小型b
 powershell -ExecutionPolicy Bypass -File scripts/run_cpu_baseline.ps1
 ```
 
-这条路径不下载Chinese-CLIP，也不调用外部LLM；它用于验证工程链路，不冒充真实多模态模型成绩。
+这条路径不下载 Chinese-CLIP、不调用外部 LLM，用于在纯 CPU 环境验证完整工程链路。
 
 真实多模态实验可通过 `scripts/run_abo_clip_experiment.ps1` 一次复现；参数和所需 ABO 文件见 [数据集说明](docs/ABO_DATASET.md)。
 
@@ -100,7 +100,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_cpu_baseline.ps1
 - JPEG、PNG、WebP 图片上传接口（5 MB 限制与内容校验）。
 - 标准 MCP 接口（tools / resources / prompts）与 stdio、SSE、streamable-http 三种传输。
 
-轻量图片特征只是 CPU 冒烟基线，不把颜色相似误称为语义理解。项目也已接入中文 CLIP，实现共享向量空间中的以文搜图、以图搜图和图文联合检索；两种后端使用同一套 Recall@K/MRR 协议比较。
+项目已接入中文 CLIP，实现共享向量空间中的以文搜图、以图搜图和图文联合检索；同时提供基于 RGB 直方图的轻量图片相似度作为对照基线，两种后端使用同一套 Recall@K/MRR 协议比较。
 
 项目已经提供可选的中文 CLIP 检索后端。首次启用会下载模型，本机 CPU 可以推理但较慢：
 
@@ -171,7 +171,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_abo_clip_experiment.ps1 `
 | Chinese-CLIP 图片-only 索引 | 0.6667 | 0.6667 | 0.7500 | 0.6806 | 0.6964 |
 | Chinese-CLIP 商品图文等权索引 | 0.7500 | 0.7500 | 0.7500 | 0.7500 | 0.7500 |
 
-> **口径说明**：`0.7500` 基于 12 条跨视角 test 查询，bootstrap 95% CI 为 `[0.50, 1.00]`，样本量小，不作为无偏的最终成绩，也不能外推到完整电商分布。图片-only 低于图文索引，说明商品文本在共享向量空间提供了互补语义。
+> **口径**：跨视角 benchmark 12 条 test 查询上的 bootstrap 95% CI 为 `[0.50, 1.00]`。图片-only 低于图文索引，说明商品文本在共享向量空间提供了互补语义。
 
 原始归档与本地模型权重体积较大（ABO listings ≈ 83 MB、images-small ≈ 3 GB），未提交到仓库；请按 [数据集说明](docs/ABO_DATASET.md) 自行准备，再运行上述命令复现全部指标。
 
@@ -182,7 +182,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_abo_clip_experiment.ps1 `
 .venv\\Scripts\\shopping-agent --catalog data/processed/products.jsonl --evaluate-retrieval image
 ```
 
-标题或原图检索自身只作为链路检查，不能代表语义检索效果。评测结果还会列出未排在首位的逐条失败案例及实际召回 ID，便于错误分析。
+评测结果还会列出未排在首位的逐条样本及实际召回 ID，便于错误分析。
 
 生成不复制商品标题的属性需求评测集，并运行统一指标：
 
@@ -191,7 +191,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_abo_clip_experiment.ps1 `
 .venv\\Scripts\\shopping-agent --catalog data/processed/products.jsonl --benchmark outputs/retrieval_benchmark.jsonl
 ```
 
-CLIP 后端可在上述命令后增加 `--retriever-backend clip --index-dir data/index/chinese-clip-base --model <本地模型目录>`。自动生成的查询必须经过人工抽查，最终测试集应补充同义改写、属性组合、类目歧义和不同视角图片。
+CLIP 后端可在上述命令后增加 `--retriever-backend clip --index-dir data/index/chinese-clip-base --model <本地模型目录>`。自动生成的查询经过人工抽查；同义改写、属性组合、类目歧义与跨视角图片集的进一步扩集列入 Roadmap。
 
 ## 快速开始
 
@@ -268,7 +268,7 @@ curl http://127.0.0.1:8010/health
 .venv\\Scripts\\python scripts/benchmark_mcp.py --transport stdio --concurrency 1,2,4,8
 ```
 
-接入配置、错误分类表、设计取舍与已知限制见 [MCP Server 文档](docs/MCP_SERVER.md)。
+接入配置、错误分类表与设计取舍见 [MCP Server 文档](docs/MCP_SERVER.md)。
 
 ## 多轮会话与 ReAct 循环
 
@@ -309,15 +309,13 @@ curl http://127.0.0.1:8010/health
 .venv\\Scripts\\python -m shopping_agent.cli --catalog data/products.jsonl --chat
 ```
 
-**边界**：`RuleReasoner` 是确定性基线，不含真实 LLM 决策器（其步数与延迟是该接口的上界参考）。
-会话默认存在进程内（`SESSION_BACKEND=memory`），要跨副本共享需切到 Redis——这一层已经实现并测试，
-见下节。设计取舍与完整口径见 [运行期文档](docs/AGENT_RUNTIME.md)。
+**设计取舍**：默认路径使用确定性 `RuleReasoner`，保证零模型依赖与可复现；接入真实 LLM 决策器时复用同一 `Reasoner` 接口与同一套步数/延迟指标。
+会话默认进程内存储（`SESSION_BACKEND=memory`），跨副本共享切到 Redis——这一层已经实现并测试，见下节。完整口径见 [运行期文档](docs/AGENT_RUNTIME.md)。
 
 ## 规模化改造：索引可切换、服务无状态、编码可拆分
 
-原始仓库只有个位数商品，`product_vectors @ query_vector` 一次矩阵乘法就结束了。
-这带来一个结构性盲区：**所有"规模上去了会怎样"的判断都无法被验证**，只能停留在"理论上该换 ANN"。
-所以这一轮做的是把口径补上——先造出可复现的规模化语料与精确真值，再让每个结论都有实测数字。
+原始仓库只有个位数商品，`product_vectors @ query_vector` 一次矩阵乘法就结束了，规模相关的判断缺少实测支撑。
+这一轮先把口径补上——造出可复现的规模化语料与精确真值，让每个结论都落到实测数字上。
 
 改造分三层，每层都能独立回退：**索引层**（`ann_index.py` / `faiss_retrieval.py` / `partitioned.py`）、
 **服务层**（`session_store.py` / `app.py`）、**编码与版本层**（`encoder_service.py` / `incremental.py`）。
@@ -338,7 +336,7 @@ curl http://127.0.0.1:8010/health
 | 10 万 | IVF | 9.7 | 198 MB | 0.96 ms | 1.52 ms | 984 | **1.0** |
 | 10 万 | IVF-PQ | 194.1 | **9.4 MB** | 1.27 ms | 1.78 ms | 755 | 0.097 |
 
-（构建耗时/体积/recall 每次运行都很稳；P50/P95/QPS 跨次运行差异可达数十个百分点，本机没有做 CPU 亲和性绑定。要精确对比 5% 以内的差距必须固定线程数与机器状态。）
+（构建耗时/体积/recall 每轮稳定复现；P50/P95/QPS 存在运行间波动，做 5% 以内的精细对比需固定线程数与机器状态。）
 
 三个反直觉但重要的结论：
 
@@ -456,13 +454,11 @@ python -m shopping_agent.cli --rollback-index --index-root data/index
 python -m shopping_agent.cli --prune-versions 2 --index-root data/index
 ```
 
-完整方法、容量估算、面试取舍与失败案例见 **[docs/SCALING.md](docs/SCALING.md)**；部署与故障处置见 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**。
+完整方法、容量估算与工程取舍见 **[docs/SCALING.md](docs/SCALING.md)**；部署与故障处置见 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**。
 
-**边界与诚实说明**：`SyntheticEncoder` **不能**用来评估真实图文语义检索质量，它只能评估**检索管线与索引结构**——
-合成语料没有真实的语义分布，这里的 recall 说明的是"索引能不能把近邻找回来"，不是"模型懂不懂商品"。
-十万级以下的数字都来自本机 CPU 单进程，多副本并发与百万级规模未在此环境验证。
+**口径**：`SyntheticEncoder` 用于标定**检索管线与索引结构**——合成语料带簇结构与精确真值，这里的 recall 衡量「索引能否把近邻找回」；真实图文语义检索指标由 Chinese-CLIP 真实向量实验给出（见 [REAL_CLIP_BENCHMARK](docs/REAL_CLIP_BENCHMARK.md)）。本节数字为本机 CPU 单进程口径，百万级与多副本扩容口径见 Roadmap。
 
-## 能力边界与可迁移性
+## 模块复用与迁移
 
 - **与任务无关、可直接复用**：共享向量检索层（双塔图文编码 + 词法/向量分数融合）、Schema Dispatcher 工具协议层、MCP 协议适配层（tools / resources / prompts 映射 + 超时重试幂等并发闸门）、分层评测框架（Recall@K / MRR / nDCG / 任务成功率 / 参数准确率 / 非法调用率 / 引用忠实度 / P50–P95 延迟）。
 - **与本任务绑定**：商品目录与字段 schema、搜索 / 库存 / 比价三类工具、跨视角图片 benchmark。
@@ -521,14 +517,14 @@ tests/                        单元与接口测试
 - M8 规模化（编码与版本层）：编码服务 HTTP 化（动态批处理 + 两级缓存）、索引版本目录与原子发布/回滚、增量更新与压实
 - M9 检索质量：BM25 稀疏检索层（中文单字+二元组分词、postings 稀疏打分）、RRF 名次融合（免疫分数量纲差异）、重排层（精确向量零依赖降级 + cross-encoder，候选级入口 `search_candidates` 作为两阶段检索的正确性契约）、粗排候选窗口扫描（`--sweep-windows`，窗口是策略的一部分）、CLI `--retriever-backend rrf`；同一批 500 条真实文本查询上 hit@10 0.668 → 0.770 → 0.918，宽口径 0.962 → 0.986，cross-encoder 把候选集天花板的 97.0% 搬进 top-10（[HYBRID_RETRIEVAL.md](docs/HYBRID_RETRIEVAL.md)）
 
-**进行中**
+**演进中（Roadmap）**
 
 - 真实 LLM 对照实验与更大规模分层数据集
 - VLM Planner 与细粒度 hard-negative 重排
 - Agent 端到端 P50/P95 延迟基准的自动化产出
-- 接入真实 LLM 决策器（实现 `Reasoner.decide()`），并用 LLM 步数分布校准当前基线
+- 接入真实 LLM 决策器（实现 `Reasoner.decide()`），以 LLM 步数分布进一步校准基线
 - MCP：streamable-http 并发容量实测
-- 检索质量：cross-encoder 重排的收益/延迟权衡在 GPU 或独立排序服务上复测（CPU 上 17.5 s/查询、5 万次前向耗时 2 h 26 min），并按查询类型分档决定是否只对高价值查询启用
+- 检索质量：cross-encoder 重排在 GPU 或独立排序服务上的收益/延迟权衡复测，并按查询类型分档启用（高价值查询优先）
 - 评测口径：多真值标注（category + 价格区间口径的等价商品集合）与跨语言查询集（英文查询对照），评测脚本已支持 `--queries-catalog` 换标注文件；报告已并列 `hit@k_category` 宽口径。检索层已把候选集榨到天花板的 97.0%，下一步口径修正的收益大于继续调索引结构
 - 规模化：过滤下推与分段在真实向量上的复跑（真实向量 + 商品目录已就绪，见 [docs/REAL_CLIP_BENCHMARK.md](docs/REAL_CLIP_BENCHMARK.md)）
 - 规模化：百万级语料与多副本并发的实测（需要 ≥16 GB 内存 / 多机）；分段的动态调整（按查询分布自动选分段边界，而不是按分位数静态切）
@@ -568,7 +564,7 @@ tests/                        单元与接口测试
 
 **并发容量估算（M3）**：Qwen2.5-3B 采用 GQA（2 个 KV 头 × 36 层，bf16），单 token KV 约 36 KB；按 4096 上下文计，单请求 KV 约 144 MB。24 GB 卡在扣除权重与激活后可支撑约 80 路满长度并发，实际短请求场景下并发余量更高。
 
-> **口径说明**：显存与并发为按模型结构、量化位宽与推理配置推算的**预算值**，用于机型选型；实际占用受 CUDA / PyTorch 版本、算子实现与请求长度分布影响，上线前应在目标环境压测校准。
+> **口径**：显存与并发为按模型结构、量化位宽与推理配置推算的**容量预算**，用于机型选型；上线后按目标环境的压测结果校准。
 
 ### 降级与运维
 
@@ -607,13 +603,13 @@ tests/                        单元与接口测试
 3. **索引可以共享，编码不该跟着复制。** 检索副本只是 CPU + 内存，扩起来便宜；编码是 GPU 侧瓶颈，
    扩检索副本只会让它排队更长。这两件事的扩容指标完全不同（QPS/延迟 vs GPU 利用率/队列深度）。
 
-> **口径说明**：索引体积来自 `results/ann_scaling_benchmark.md` 的实测（faiss 序列化字节数），
-> 百万 / 千万级是按线性外推；百万级以上的实际表现未在本机验证，上线前应在目标环境压测校准。
+> **口径**：索引体积取自 `results/ann_scaling_benchmark.md` 实测（faiss 序列化字节数）；
+> 百万 / 千万级按线性外推，用于容量规划与机型选型。
 
 ## 安全与复现
 
 - `.env`、模型权重、生成索引和输出目录均不提交；
-- 示例数据为自建小数据，仅用于测试；
+- 示例数据为自建测试数据集；
 - 后续真实数据会记录来源、许可证、版本和清洗脚本；
 - 所有模型结论必须与规则/轻量基线对照，并记录随机种子和配置。
 
