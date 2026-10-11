@@ -149,6 +149,7 @@ class SessionSnapshot(BaseModel):
     state: SessionState = Field(default_factory=SessionState)
     turns: list[Turn] = Field(default_factory=list)
     summaries: list[str] = Field(default_factory=list)
+    ui_history: list[dict] = Field(default_factory=list)
     version: int = 0
     updated_at: str | None = None
 
@@ -220,6 +221,7 @@ class SessionMemory:
         self.system_prompt = system_prompt
         self.state = SessionState()
         self.turns: list[Turn] = []
+        self.ui_history: list[dict] = []
         self._summaries: list[str] = []
         # 版本号由外部存储维护（见 session_store 的 CAS 写入）；单进程使用时恒为 0。
         self.version: int = 0
@@ -233,6 +235,7 @@ class SessionMemory:
             state=self.state.model_copy(deep=True),
             turns=[turn.model_copy(deep=True) for turn in self.turns],
             summaries=list(self._summaries),
+            ui_history=list(self.ui_history),
             version=self.version,
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -243,6 +246,7 @@ class SessionMemory:
         self.state = snapshot.state.model_copy(deep=True)
         self.turns = [turn.model_copy(deep=True) for turn in snapshot.turns]
         self._summaries = list(snapshot.summaries)
+        self.ui_history = list(snapshot.ui_history)
         self.version = snapshot.version
         return self
 

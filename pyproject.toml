@@ -44,7 +44,7 @@ shopping-agent-mcp = "shopping_agent.mcp_server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-shopping_agent = ["static/*.html"]
+shopping_agent = ["static/ui/*.html", "static/ui/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
